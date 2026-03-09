@@ -29,7 +29,7 @@ llm:
   enabled: true
 
   image:
-    repository: ollama/ollama
+    repository: intelanalytics/ipex-llm-inference-cpp-xpu
     tag: latest
     pullPolicy: IfNotPresent
 
@@ -50,6 +50,7 @@ llm:
     limits:
       cpu: "8"
       memory: "24Gi"
+      gpu.intel.com/i915: 1
 
   # PVC for model files — mounted on SATA SSD via local-path
   storage:
@@ -60,11 +61,10 @@ llm:
 
   # Environment variables
   env:
-    - name: OLLAMA_HOST
-      value: "0.0.0.0:11434"
-    # Enable experimental Vulkan backend for Intel Arc GPU acceleration
-    - name: OLLAMA_VULKAN
-      value: "1"
+    - name: OLLAMA_INTEL_GPU
+      value: "true"
+    - name: ONEAPI_DEVICE_SELECTOR
+      value: "level_zero:0"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -95,7 +95,7 @@ embeddings:
   enabled: true
 
   image:
-    repository: ollama/ollama
+    repository: intelanalytics/ipex-llm-inference-cpp-xpu
     tag: latest
     pullPolicy: IfNotPresent
 
@@ -110,6 +110,7 @@ embeddings:
     limits:
       cpu: "4"
       memory: "8Gi"
+      gpu.intel.com/i915: 1
 
   storage:
     enabled: true
@@ -120,8 +121,10 @@ embeddings:
   # OLLAMA_HOST for embeddings is set by the deployment template (includes port 11435).
   # Do not set it here — it would create a duplicate env var.
   env:
-    - name: OLLAMA_VULKAN
-      value: "1"
+    - name: OLLAMA_INTEL_GPU
+      value: "true"
+    - name: ONEAPI_DEVICE_SELECTOR
+      value: "level_zero:0"
 
   # Pin to pve2
   nodeSelector: {}
@@ -149,13 +152,19 @@ summarizer:
   enabled: true
 
   image:
-    repository: ollama/ollama
+    repository: intelanalytics/ipex-llm-inference-cpp-xpu
     tag: latest
     pullPolicy: IfNotPresent
 
   port: 11436
 
   defaultModel: "qwen2.5:7b"
+
+  env:
+    - name: OLLAMA_INTEL_GPU
+      value: "true"
+    - name: ONEAPI_DEVICE_SELECTOR
+      value: "level_zero:0"
 
   resources:
     requests:
@@ -164,18 +173,13 @@ summarizer:
     limits:
       cpu: "4"
       memory: "8Gi"
+      gpu.intel.com/i915: 1
 
   storage:
     enabled: true
     size: 30Gi
     storageClass: ""
     mountPath: /root/.ollama
-
-  # OLLAMA_HOST for summarizer is set by the deployment template (includes port 11436).
-  # Do not set it here — it would create a duplicate env var.
-  env:
-    - name: OLLAMA_VULKAN
-      value: "1"
 
   # Pin to pve2
   nodeSelector: {}
