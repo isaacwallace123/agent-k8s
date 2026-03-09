@@ -27,9 +27,6 @@ spec:
       labels:
         {{- include "homelab-ai.selectorLabels" (dict "component" "llm" "context" .) | nindent 8 }}
     spec:
-      # -----------------------------------------------------------------------
-      # Node scheduling — pin to pve1
-      # -----------------------------------------------------------------------
       nodeSelector:
         {{- include "homelab-ai.nodeSelectorPve1" . | nindent 8 }}
       {{- with .Values.llm.tolerations }}
@@ -53,36 +50,37 @@ spec:
           resources:
             {{- toYaml .Values.llm.resources | nindent 12 }}
 
-          {{- if .Values.llm.storage.enabled }}
+          # render group (109) grants access to /dev/dri/renderD128 (Intel Arc B580)
+          securityContext:
+            supplementalGroups:
+              - 109
+
           volumeMounts:
             - name: model-storage
               mountPath: {{ .Values.llm.storage.mountPath }}
-          {{- end }}
+            - name: dri
+              mountPath: /dev/dri
 
-          # ------------------------------------------------------------------
-          # Probes — Ollama exposes /api/tags as a health endpoint
-          # ------------------------------------------------------------------
-          {{- if .Values.llm.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
               path: {{ .Values.llm.probes.liveness.path }}
               port: http
             initialDelaySeconds: {{ .Values.llm.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.llm.probes.liveness.periodSeconds }}
-          {{- end }}
-          {{- if .Values.llm.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
               path: {{ .Values.llm.probes.readiness.path }}
               port: http
             initialDelaySeconds: {{ .Values.llm.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.llm.probes.readiness.periodSeconds }}
-          {{- end }}
 
-      {{- if .Values.llm.storage.enabled }}
       volumes:
         - name: model-storage
           persistentVolumeClaim:
             claimName: llm-models
-      {{- end }}
+        # Expose Intel Arc B580 GPU to the container for hardware-accelerated inference
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
 {{- end }}
