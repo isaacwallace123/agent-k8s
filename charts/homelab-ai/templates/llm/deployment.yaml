@@ -38,6 +38,8 @@ spec:
       securityContext:
         supplementalGroups:
           - 993
+        runAsUser: 0
+        runAsGroup: 0
 
       containers:
         - name: ollama
