@@ -1,0 +1,19 @@
+{{- if and .Values.embeddings.enabled .Values.embeddings.storage.enabled }}
+---
+# PVC for embeddings model files — lives on pve2 (bound by nodeSelector)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: embeddings-models
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embeddings
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.embeddings "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.embeddings.storage.size }}
+{{- end }}

@@ -1,0 +1,20 @@
+{{- if .Values.embeddings.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embeddings
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embeddings
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "homelab-ai.selectorLabels" (dict "component" "embeddings" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.embeddings.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

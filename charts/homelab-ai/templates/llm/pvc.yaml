@@ -1,0 +1,21 @@
+{{- if and .Values.llm.enabled .Values.llm.storage.enabled }}
+---
+# PVC for LLM model files
+# Bound to pve1 by nodeSelector on the deployment.
+# Use a large size — 32B+ models can exceed 20GB each.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llm-models
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: llm
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.llm "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.llm.storage.size }}
+{{- end }}

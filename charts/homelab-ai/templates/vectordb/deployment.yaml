@@ -1,0 +1,88 @@
+{{- if .Values.vectordb.enabled }}
+---
+# =============================================================================
+# VectorDB — Qdrant vector database
+# Scheduled on pve1 NVMe for fast approximate nearest-neighbor (ANN) search.
+# Qdrant stores collections on disk; NVMe latency matters for large corpora.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vectordb
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vectordb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "vectordb" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "vectordb" "context" .) | nindent 8 }}
+    spec:
+      # -----------------------------------------------------------------------
+      # Node scheduling — pin to pve1 (NVMe storage, hot retrieval path)
+      # -----------------------------------------------------------------------
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve1" . | nindent 8 }}
+      {{- with .Values.vectordb.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: qdrant
+          image: "{{ .Values.vectordb.image.repository }}:{{ .Values.vectordb.image.tag }}"
+          imagePullPolicy: {{ .Values.vectordb.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.vectordb.port }}
+              protocol: TCP
+            - name: grpc
+              containerPort: {{ .Values.vectordb.grpcPort }}
+              protocol: TCP
+
+          {{- if .Values.vectordb.env }}
+          env:
+            {{- include "homelab-ai.envList" .Values.vectordb.env | nindent 12 }}
+          {{- end }}
+
+          resources:
+            {{- toYaml .Values.vectordb.resources | nindent 12 }}
+
+          {{- if .Values.vectordb.storage.enabled }}
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: {{ .Values.vectordb.storage.mountPath }}
+          {{- end }}
+
+          {{- if .Values.vectordb.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.vectordb.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.vectordb.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.vectordb.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.vectordb.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.vectordb.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.vectordb.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.vectordb.probes.readiness.periodSeconds }}
+          {{- end }}
+
+      {{- if .Values.vectordb.storage.enabled }}
+      volumes:
+        - name: qdrant-storage
+          persistentVolumeClaim:
+            claimName: vectordb-storage
+      {{- end }}
+{{- end }}

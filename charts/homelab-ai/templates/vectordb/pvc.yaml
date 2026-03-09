@@ -1,0 +1,20 @@
+{{- if and .Values.vectordb.enabled .Values.vectordb.storage.enabled }}
+---
+# PVC for Qdrant collections — bound to pve1 NVMe by nodeSelector on the Deployment.
+# Use a dedicated fast storage class here if you provision one for NVMe.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vectordb-storage
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vectordb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.vectordb "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.vectordb.storage.size }}
+{{- end }}

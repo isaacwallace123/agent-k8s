@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# ArgoCD Application — homelab-ai
+# =============================================================================
+# Deploy this to ArgoCD with:
+#   kubectl apply -f argocd/application.yaml -n argocd
+#
+# ArgoCD will watch the repository and sync the Helm chart automatically.
+# Secrets (postgres password, etc.) must be pre-created outside of this chart
+# or managed via a secret manager (Sealed Secrets, ESO, Vault).
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: homelab-ai
+  namespace: argocd
+  # Cascade delete: removing this Application will also remove all chart resources
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # TODO: Replace with your actual Git remote URL once the repo is pushed
+    repoURL: https://github.com/isaacwallace123/agent-k8s.git
+    targetRevision: HEAD
+    path: charts/homelab-ai
+
+    helm:
+      # Use values.yaml from the chart + any override files you add here
+      valueFiles:
+        - values.yaml
+        # Uncomment to layer in a per-environment override file:
+        # - values-homelab.yaml
+
+      # Inline value overrides (safe to commit — no secrets here)
+      # values: |
+      #   global:
+      #     storageClass: local-path
+
+  destination:
+    # Deploy into the same cluster ArgoCD is running in
+    server: https://kubernetes.default.svc
+    namespace: homelab-ai
+
+  syncPolicy:
+    automated:
+      # Auto-sync when the Git repo changes
+      selfHeal: true
+      prune: true
+    syncOptions:
+      # Create the namespace if it doesn't exist yet
+      - CreateNamespace=true
+      # Use server-side apply for large CRDs
+      - ServerSideApply=true
+
+  # Health checks — ArgoCD considers the app Healthy when all pods are Running
+  # No extra configuration needed; default Deployment/PVC health checks apply.

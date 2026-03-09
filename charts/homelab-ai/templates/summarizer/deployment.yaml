@@ -1,0 +1,86 @@
+{{- if .Values.summarizer.enabled }}
+---
+# =============================================================================
+# Summarizer — Compaction / context compression service (Ollama, fast model)
+# Scheduled on pve2 (Intel Arc A380 6GB)
+# Handles long-context summarization and rolling memory compression.
+# Uses a smaller, faster model (e.g. qwen2.5:7b) to keep latency low.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summarizer
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: summarizer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "summarizer" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "summarizer" "context" .) | nindent 8 }}
+    spec:
+      # -----------------------------------------------------------------------
+      # Node scheduling — pin to pve2 (keeps compression off the hot path)
+      # -----------------------------------------------------------------------
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
+      {{- with .Values.summarizer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: ollama
+          image: "{{ .Values.summarizer.image.repository }}:{{ .Values.summarizer.image.tag }}"
+          imagePullPolicy: {{ .Values.summarizer.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.summarizer.port }}
+              protocol: TCP
+
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:{{ .Values.summarizer.port }}"
+            {{- include "homelab-ai.envList" .Values.summarizer.env | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.summarizer.resources | nindent 12 }}
+
+          {{- if .Values.summarizer.storage.enabled }}
+          volumeMounts:
+            - name: model-storage
+              mountPath: {{ .Values.summarizer.storage.mountPath }}
+          {{- end }}
+
+          {{- if .Values.summarizer.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.summarizer.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.summarizer.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.summarizer.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.summarizer.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.summarizer.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.summarizer.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.summarizer.probes.readiness.periodSeconds }}
+          {{- end }}
+
+      {{- if .Values.summarizer.storage.enabled }}
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: summarizer-models
+      {{- end }}
+{{- end }}

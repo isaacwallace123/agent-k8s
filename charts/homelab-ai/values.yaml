@@ -1,0 +1,354 @@
+# =============================================================================
+# homelab-ai — Global Values
+# =============================================================================
+# Node selectors use the proxmox-host label applied to each k8s node.
+# Run: kubectl label node <node-name> proxmox-host=pve1
+#                         kubectl label node <node-name> proxmox-host=pve2
+
+global:
+  # Namespace to deploy everything into
+  namespace: homelab-ai
+
+  # Storage class for all PVCs (override per-component if needed)
+  # "local-path" is the k3s default; swap to your Longhorn/NFS class if desired
+  storageClass: local-path
+
+  # Node label key used to pin workloads to specific Proxmox hosts
+  nodeLabelKey: proxmox-host
+
+  # Node label values for each host
+  pve1: pve1   # Primary: hot inference, vector DB, Postgres, Redis
+  pve2: pve2   # Compute: embeddings, summarizer, background workers
+
+# =============================================================================
+# LLM — Main coding / chat model
+# Runs on pve1 (Intel Arc B580 12GB)
+# Served via Ollama. Model files live on pve1 SATA SSD (mounted as PVC).
+# =============================================================================
+llm:
+  enabled: true
+
+  image:
+    repository: ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Port the Ollama API listens on
+  port: 11434
+
+  # Default model — qwen2.5-coder:14b fits fully in Arc B580 12GB VRAM (~8.5GB Q4_K_M).
+  # 32B requires ~19GB and will partially offload to CPU RAM (slow).
+  # Pull models manually: kubectl exec -n homelab-ai deploy/llm -- ollama pull qwen2.5-coder:14b
+  defaultModel: "qwen2.5-coder:14b"
+
+  # Resource requests/limits
+  # Leave limits unset to let the container use all available GPU memory
+  resources:
+    requests:
+      cpu: "2"
+      memory: "8Gi"
+    limits:
+      cpu: "8"
+      memory: "24Gi"
+
+  # PVC for model files — mounted on SATA SSD via local-path
+  storage:
+    enabled: true
+    size: 200Gi
+    storageClass: ""   # inherits global.storageClass if empty
+    mountPath: /root/.ollama
+
+  # Environment variables
+  env:
+    # Ollama listens on all interfaces. Embeddings/summarizer set their own port
+    # via the deployment template — do not set OLLAMA_HOST here for those.
+    - name: OLLAMA_HOST
+      value: "0.0.0.0:11434"
+    # Optional: set to your GPU device if needed
+    # - name: CUDA_VISIBLE_DEVICES
+    #   value: "0"
+
+  # Node scheduling — pin to pve1
+  nodeSelector: {}   # populated via _helpers.tpl using global.pve1
+
+  # Pod-level tolerations if nodes are tainted
+  tolerations: []
+
+  # Liveness / readiness probes
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      path: /api/tags
+    readiness:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      path: /api/tags
+
+# =============================================================================
+# Embeddings — Text embedding service
+# Runs on pve2 (Intel Arc A380 6GB)
+# Uses a lightweight Ollama instance with an embedding model.
+# Keeps inference traffic off pve1 for background indexing tasks.
+# =============================================================================
+embeddings:
+  enabled: true
+
+  image:
+    repository: ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  port: 11435
+
+  defaultModel: "nomic-embed-text"
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+
+  storage:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    mountPath: /root/.ollama
+
+  # OLLAMA_HOST for embeddings is set by the deployment template (includes port 11435).
+  # Do not set it here — it would create a duplicate env var.
+  env: []
+
+  # Pin to pve2
+  nodeSelector: {}
+
+  tolerations: []
+
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      path: /api/tags
+    readiness:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      path: /api/tags
+
+# =============================================================================
+# Summarizer — Compaction / long-context summarizer
+# Runs on pve2 (offloads compression work from pve1)
+# Separate Ollama instance with a smaller, fast model.
+# =============================================================================
+summarizer:
+  enabled: true
+
+  image:
+    repository: ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  port: 11436
+
+  defaultModel: "qwen2.5:7b"
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+
+  storage:
+    enabled: true
+    size: 30Gi
+    storageClass: ""
+    mountPath: /root/.ollama
+
+  # OLLAMA_HOST for summarizer is set by the deployment template (includes port 11436).
+  # Do not set it here — it would create a duplicate env var.
+  env: []
+
+  # Pin to pve2
+  nodeSelector: {}
+
+  tolerations: []
+
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      path: /api/tags
+    readiness:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      path: /api/tags
+
+# =============================================================================
+# VectorDB — Qdrant vector database
+# Runs on pve1 NVMe for fast ANN search
+# =============================================================================
+vectordb:
+  enabled: true
+
+  image:
+    repository: qdrant/qdrant
+    tag: v1.13.4
+    pullPolicy: IfNotPresent
+
+  port: 6333
+  grpcPort: 6334
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+
+  storage:
+    enabled: true
+    # Place on pve1 NVMe — use a dedicated storage class if you have one,
+    # otherwise local-path will bind to wherever the pod schedules (pve1).
+    size: 100Gi
+    storageClass: ""
+    mountPath: /qdrant/storage
+
+  env: []
+
+  # Pin to pve1
+  nodeSelector: {}
+
+  tolerations: []
+
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 30
+      path: /healthz
+    readiness:
+      enabled: true
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      path: /readyz
+
+# =============================================================================
+# Postgres — Metadata / session / memory store
+# Runs on pve1 NVMe
+# =============================================================================
+postgres:
+  enabled: true
+
+  image:
+    repository: postgres
+    tag: "16"
+    pullPolicy: IfNotPresent
+
+  port: 5432
+
+  # Database credentials — override in a sealed-secret or values-secret.yaml
+  auth:
+    database: homelab_ai
+    username: aiuser
+    # Password is set via a Kubernetes Secret (see templates/postgres/secret.yaml)
+    # Set this in a values-secret.yaml that is NOT committed to git:
+    #   postgres:
+    #     auth:
+    #       password: "your-password-here"
+    password: "changeme"
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+
+  storage:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+    mountPath: /var/lib/postgresql/data
+    # Postgres requires a subdirectory inside the mount to avoid permission issues
+    subPath: pgdata
+
+  env:
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pgdata
+
+  # Pin to pve1
+  nodeSelector: {}
+
+  tolerations: []
+
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 30
+    readiness:
+      enabled: true
+      initialDelaySeconds: 10
+      periodSeconds: 5
+
+# =============================================================================
+# Redis — Cache / session state / pub-sub
+# Runs on pve1 NVMe
+# =============================================================================
+redis:
+  enabled: true
+
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+
+  port: 6379
+
+  # Optional: set a password via requirepass
+  auth:
+    enabled: false
+    password: ""
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+  storage:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    mountPath: /data
+
+  # Extra redis.conf args appended to the command
+  extraArgs: "--save 60 1 --loglevel notice"
+
+  # Pin to pve1
+  nodeSelector: {}
+
+  tolerations: []
+
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    readiness:
+      enabled: true
+      initialDelaySeconds: 5
+      periodSeconds: 5

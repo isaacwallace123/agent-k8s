@@ -1,0 +1,103 @@
+{{- if .Values.postgres.enabled }}
+---
+# =============================================================================
+# Postgres — Metadata, session, and memory store
+# Scheduled on pve1 NVMe (fast random I/O for OLTP workloads).
+# Credentials injected from the postgres-credentials Secret.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "postgres" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "postgres" "context" .) | nindent 8 }}
+    spec:
+      # -----------------------------------------------------------------------
+      # Node scheduling — pin to pve1 (hot storage path)
+      # -----------------------------------------------------------------------
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve1" . | nindent 8 }}
+      {{- with .Values.postgres.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.postgres.port }}
+              protocol: TCP
+
+          # Credentials from Secret
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
+
+          # Extra env vars (e.g. PGDATA path)
+          env:
+            {{- include "homelab-ai.envList" .Values.postgres.env | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+
+          {{- if .Values.postgres.storage.enabled }}
+          volumeMounts:
+            - name: postgres-data
+              mountPath: {{ .Values.postgres.storage.mountPath }}
+              {{- if .Values.postgres.storage.subPath }}
+              subPath: {{ .Values.postgres.storage.subPath }}
+              {{- end }}
+          {{- end }}
+
+          # ------------------------------------------------------------------
+          # Probes — use pg_isready for reliable health checks
+          # ------------------------------------------------------------------
+          {{- if .Values.postgres.probes.liveness.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.auth.username }}
+                - -d
+                - {{ .Values.postgres.auth.database }}
+            initialDelaySeconds: {{ .Values.postgres.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.postgres.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.postgres.probes.readiness.enabled }}
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.auth.username }}
+                - -d
+                - {{ .Values.postgres.auth.database }}
+            initialDelaySeconds: {{ .Values.postgres.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.postgres.probes.readiness.periodSeconds }}
+          {{- end }}
+
+      {{- if .Values.postgres.storage.enabled }}
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data
+      {{- end }}
+{{- end }}

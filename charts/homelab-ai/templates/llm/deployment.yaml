@@ -1,0 +1,88 @@
+{{- if .Values.llm.enabled }}
+---
+# =============================================================================
+# LLM — Main coding / chat model (Ollama)
+# Scheduled on pve1 (Intel Arc B580 12GB)
+# Model files stored on pve1 SATA SSD via PVC.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: llm
+spec:
+  # Single replica — one Ollama process manages the GPU context
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "llm" "context" .) | nindent 6 }}
+  strategy:
+    # Recreate so the GPU is fully released before the new pod starts
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "llm" "context" .) | nindent 8 }}
+    spec:
+      # -----------------------------------------------------------------------
+      # Node scheduling — pin to pve1
+      # -----------------------------------------------------------------------
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve1" . | nindent 8 }}
+      {{- with .Values.llm.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: ollama
+          image: "{{ .Values.llm.image.repository }}:{{ .Values.llm.image.tag }}"
+          imagePullPolicy: {{ .Values.llm.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.llm.port }}
+              protocol: TCP
+
+          env:
+            {{- include "homelab-ai.envList" .Values.llm.env | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.llm.resources | nindent 12 }}
+
+          {{- if .Values.llm.storage.enabled }}
+          volumeMounts:
+            - name: model-storage
+              mountPath: {{ .Values.llm.storage.mountPath }}
+          {{- end }}
+
+          # ------------------------------------------------------------------
+          # Probes — Ollama exposes /api/tags as a health endpoint
+          # ------------------------------------------------------------------
+          {{- if .Values.llm.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.llm.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.llm.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.llm.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.llm.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.llm.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.llm.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.llm.probes.readiness.periodSeconds }}
+          {{- end }}
+
+      {{- if .Values.llm.storage.enabled }}
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: llm-models
+      {{- end }}
+{{- end }}

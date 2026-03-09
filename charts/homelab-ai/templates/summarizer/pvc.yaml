@@ -1,0 +1,19 @@
+{{- if and .Values.summarizer.enabled .Values.summarizer.storage.enabled }}
+---
+# PVC for summarizer model files — lives on pve2
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: summarizer-models
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: summarizer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.summarizer "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.summarizer.storage.size }}
+{{- end }}

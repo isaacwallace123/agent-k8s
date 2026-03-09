@@ -1,0 +1,20 @@
+# Helm
+charts/*/charts/
+charts/*/tmpcharts/
+*.tgz
+
+# Secrets / local overrides — never commit these
+values-secret.yaml
+values-local.yaml
+*-secret.yaml
+*.env
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
