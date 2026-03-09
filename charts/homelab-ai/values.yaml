@@ -50,7 +50,7 @@ llm:
     limits:
       cpu: "8"
       memory: "24Gi"
-      gpu.intel.com/i915: 1
+      gpu.intel.com/xe: 1
 
   # PVC for model files — mounted on SATA SSD via local-path
   storage:
@@ -110,7 +110,7 @@ embeddings:
     limits:
       cpu: "4"
       memory: "8Gi"
-      gpu.intel.com/i915: 1
+      # gpu.intel.com/xe: 1
 
   storage:
     enabled: true
@@ -173,7 +173,7 @@ summarizer:
     limits:
       cpu: "4"
       memory: "8Gi"
-      gpu.intel.com/i915: 1
+      # gpu.intel.com/xe: 1
 
   storage:
     enabled: true
