@@ -34,6 +34,11 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
+      # render group (109) grants access to /dev/dri/renderD128 (Intel Arc B580)
+      securityContext:
+        supplementalGroups:
+          - 109
+
       containers:
         - name: ollama
           image: "{{ .Values.llm.image.repository }}:{{ .Values.llm.image.tag }}"
@@ -49,11 +54,6 @@ spec:
 
           resources:
             {{- toYaml .Values.llm.resources | nindent 12 }}
-
-          # render group (109) grants access to /dev/dri/renderD128 (Intel Arc B580)
-          securityContext:
-            supplementalGroups:
-              - 109
 
           volumeMounts:
             - name: model-storage

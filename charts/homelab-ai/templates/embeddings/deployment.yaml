@@ -25,15 +25,17 @@ spec:
       labels:
         {{- include "homelab-ai.selectorLabels" (dict "component" "embeddings" "context" .) | nindent 8 }}
     spec:
-      # -----------------------------------------------------------------------
-      # Node scheduling — pin to pve2
-      # -----------------------------------------------------------------------
       nodeSelector:
         {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
       {{- with .Values.embeddings.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+
+      # render group (109) grants access to /dev/dri/renderD128 (Intel Arc A380)
+      securityContext:
+        supplementalGroups:
+          - 109
 
       containers:
         - name: ollama
@@ -46,8 +48,6 @@ spec:
               protocol: TCP
 
           env:
-            # Override the default Ollama port so it doesn't conflict if
-            # somehow both instances end up on the same host during testing
             - name: OLLAMA_HOST
               value: "0.0.0.0:{{ .Values.embeddings.port }}"
             {{- include "homelab-ai.envList" .Values.embeddings.env | nindent 12 }}
@@ -55,33 +55,32 @@ spec:
           resources:
             {{- toYaml .Values.embeddings.resources | nindent 12 }}
 
-          {{- if .Values.embeddings.storage.enabled }}
           volumeMounts:
             - name: model-storage
               mountPath: {{ .Values.embeddings.storage.mountPath }}
-          {{- end }}
+            - name: dri
+              mountPath: /dev/dri
 
-          {{- if .Values.embeddings.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
               path: {{ .Values.embeddings.probes.liveness.path }}
               port: http
             initialDelaySeconds: {{ .Values.embeddings.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.embeddings.probes.liveness.periodSeconds }}
-          {{- end }}
-          {{- if .Values.embeddings.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
               path: {{ .Values.embeddings.probes.readiness.path }}
               port: http
             initialDelaySeconds: {{ .Values.embeddings.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.embeddings.probes.readiness.periodSeconds }}
-          {{- end }}
 
-      {{- if .Values.embeddings.storage.enabled }}
       volumes:
         - name: model-storage
           persistentVolumeClaim:
             claimName: embeddings-models
-      {{- end }}
+        # Expose Intel Arc A380 GPU to the container for hardware-accelerated inference
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
 {{- end }}
