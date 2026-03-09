@@ -1,0 +1,20 @@
+{{- if .Values.openwebui.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openwebui
+spec:
+  type: LoadBalancer
+  selector:
+    {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+{{- end }}

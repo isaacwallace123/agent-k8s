@@ -68,6 +68,16 @@ role: ai
 {{- end }}
 
 {{/*
+Build a nodeSelector that pins the workload to the pve2 apps node.
+Targets k3s-worker-node-2 (proxmox-host=pve2, role=apps).
+Usage: include "homelab-ai.nodeSelectorApps" .
+*/}}
+{{- define "homelab-ai.nodeSelectorApps" -}}
+{{ .Values.global.nodeLabelKey }}: {{ .Values.global.pve2 }}
+role: apps
+{{- end }}
+
+{{/*
 Render a list of env vars from a component's .env list.
 Usage: include "homelab-ai.envList" .Values.llm.env
 */}}

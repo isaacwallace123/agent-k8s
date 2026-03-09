@@ -352,3 +352,43 @@ redis:
       enabled: true
       initialDelaySeconds: 5
       periodSeconds: 5
+
+# =============================================================================
+# Open WebUI — Chat interface for Ollama
+# Runs on pve2 apps node (k3s-worker-node-2)
+# Exposed via MetalLB LoadBalancer for LAN access.
+# Connects to the LLM service internally at http://llm:11434
+# =============================================================================
+openwebui:
+  enabled: true
+
+  image:
+    repository: ghcr.io/open-webui/open-webui
+    tag: main
+    pullPolicy: IfNotPresent
+
+  port: 8080
+
+  # Internal URL of the Ollama LLM service
+  ollamaBaseUrl: "http://llm:11434"
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  storage:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    mountPath: /app/backend/data
+
+  env: []
+
+  # Pin to pve2 apps node (k3s-worker-node-2)
+  nodeSelector: {}
+
+  tolerations: []

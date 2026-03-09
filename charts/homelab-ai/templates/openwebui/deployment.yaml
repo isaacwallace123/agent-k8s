@@ -1,0 +1,77 @@
+{{- if .Values.openwebui.enabled }}
+---
+# =============================================================================
+# Open WebUI — Chat interface for Ollama
+# Scheduled on pve2 apps node (k3s-worker-node-2)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwebui
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openwebui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui" "context" .) | nindent 8 }}
+    spec:
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+      {{- with .Values.openwebui.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: openwebui
+          image: "{{ .Values.openwebui.image.repository }}:{{ .Values.openwebui.image.tag }}"
+          imagePullPolicy: {{ .Values.openwebui.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.openwebui.port }}
+              protocol: TCP
+
+          env:
+            - name: OLLAMA_BASE_URL
+              value: {{ .Values.openwebui.ollamaBaseUrl | quote }}
+            {{- include "homelab-ai.envList" .Values.openwebui.env | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.openwebui.resources | nindent 12 }}
+
+          {{- if .Values.openwebui.storage.enabled }}
+          volumeMounts:
+            - name: webui-data
+              mountPath: {{ .Values.openwebui.storage.mountPath }}
+          {{- end }}
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+      {{- if .Values.openwebui.storage.enabled }}
+      volumes:
+        - name: webui-data
+          persistentVolumeClaim:
+            claimName: openwebui-data
+      {{- end }}
+{{- end }}
