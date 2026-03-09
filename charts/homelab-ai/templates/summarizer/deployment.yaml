@@ -33,10 +33,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-      # render group (109) grants access to /dev/dri/renderD128 (Intel Arc A380)
+      # render group (993 on these nodes) grants access to /dev/dri/renderD128 (Intel Arc A380)
       securityContext:
         supplementalGroups:
-          - 109
+          - 993
 
       containers:
         - name: ollama
