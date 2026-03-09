@@ -60,13 +60,11 @@ llm:
 
   # Environment variables
   env:
-    # Ollama listens on all interfaces. Embeddings/summarizer set their own port
-    # via the deployment template — do not set OLLAMA_HOST here for those.
     - name: OLLAMA_HOST
       value: "0.0.0.0:11434"
-    # Optional: set to your GPU device if needed
-    # - name: CUDA_VISIBLE_DEVICES
-    #   value: "0"
+    # Enable experimental Vulkan backend for Intel Arc GPU acceleration
+    - name: OLLAMA_VULKAN
+      value: "1"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -121,7 +119,9 @@ embeddings:
 
   # OLLAMA_HOST for embeddings is set by the deployment template (includes port 11435).
   # Do not set it here — it would create a duplicate env var.
-  env: []
+  env:
+    - name: OLLAMA_VULKAN
+      value: "1"
 
   # Pin to pve2
   nodeSelector: {}
@@ -173,7 +173,9 @@ summarizer:
 
   # OLLAMA_HOST for summarizer is set by the deployment template (includes port 11436).
   # Do not set it here — it would create a duplicate env var.
-  env: []
+  env:
+    - name: OLLAMA_VULKAN
+      value: "1"
 
   # Pin to pve2
   nodeSelector: {}
