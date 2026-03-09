@@ -61,8 +61,6 @@ llm:
 
   # Environment variables
   env:
-    - name: OLLAMA_HOST
-      value: "0.0.0.0:11434"
     - name: OLLAMA_INTEL_GPU
       value: "true"
     - name: ONEAPI_DEVICE_SELECTOR
@@ -123,8 +121,6 @@ embeddings:
   # OLLAMA_HOST for embeddings is set by the deployment template (includes port 11435).
   # Do not set it here — it would create a duplicate env var.
   env:
-    - name: OLLAMA_HOST
-      value: "0.0.0.0:11435"
     - name: OLLAMA_INTEL_GPU
       value: "true"
     - name: ONEAPI_DEVICE_SELECTOR
@@ -165,8 +161,6 @@ summarizer:
   defaultModel: "qwen2.5:7b"
 
   env:
-    - name: OLLAMA_HOST
-      value: "0.0.0.0:11434"
     - name: OLLAMA_INTEL_GPU
       value: "true"
     - name: ONEAPI_DEVICE_SELECTOR
