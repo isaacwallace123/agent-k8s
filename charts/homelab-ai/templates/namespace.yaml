@@ -1,0 +1,9 @@
+---
+# Namespace — all homelab-ai workloads live here
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/name: homelab-ai

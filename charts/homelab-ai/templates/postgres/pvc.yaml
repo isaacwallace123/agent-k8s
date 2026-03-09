@@ -1,0 +1,19 @@
+{{- if and .Values.postgres.enabled .Values.postgres.storage.enabled }}
+---
+# PVC for Postgres data — bound to pve1 NVMe by nodeSelector on the Deployment.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.postgres "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storage.size }}
+{{- end }}

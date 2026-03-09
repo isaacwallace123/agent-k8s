@@ -1,0 +1,87 @@
+{{- if .Values.embeddings.enabled }}
+---
+# =============================================================================
+# Embeddings — Text embedding service (Ollama, lightweight model)
+# Scheduled on pve2 (Intel Arc A380 6GB)
+# Handles background indexing so pve1 LLM stays available for interactive use.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embeddings
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embeddings
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "embeddings" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "embeddings" "context" .) | nindent 8 }}
+    spec:
+      # -----------------------------------------------------------------------
+      # Node scheduling — pin to pve2
+      # -----------------------------------------------------------------------
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
+      {{- with .Values.embeddings.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: ollama
+          image: "{{ .Values.embeddings.image.repository }}:{{ .Values.embeddings.image.tag }}"
+          imagePullPolicy: {{ .Values.embeddings.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.embeddings.port }}
+              protocol: TCP
+
+          env:
+            # Override the default Ollama port so it doesn't conflict if
+            # somehow both instances end up on the same host during testing
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:{{ .Values.embeddings.port }}"
+            {{- include "homelab-ai.envList" .Values.embeddings.env | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.embeddings.resources | nindent 12 }}
+
+          {{- if .Values.embeddings.storage.enabled }}
+          volumeMounts:
+            - name: model-storage
+              mountPath: {{ .Values.embeddings.storage.mountPath }}
+          {{- end }}
+
+          {{- if .Values.embeddings.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.embeddings.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.embeddings.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.embeddings.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.embeddings.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.embeddings.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.embeddings.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.embeddings.probes.readiness.periodSeconds }}
+          {{- end }}
+
+      {{- if .Values.embeddings.storage.enabled }}
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: embeddings-models
+      {{- end }}
+{{- end }}

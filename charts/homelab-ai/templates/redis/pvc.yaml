@@ -1,0 +1,19 @@
+{{- if and .Values.redis.enabled .Values.redis.storage.enabled }}
+---
+# PVC for Redis AOF/RDB persistence — bound to pve1 by nodeSelector
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.redis "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.storage.size }}
+{{- end }}

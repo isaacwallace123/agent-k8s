@@ -1,0 +1,109 @@
+{{- if .Values.redis.enabled }}
+---
+# =============================================================================
+# Redis — Cache, session state, pub-sub broker
+# Scheduled on pve1 NVMe (memory-speed ops, optional persistence to NVMe).
+# Minimal config: Alpine image, optional AOF persistence, optional password.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "redis" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "redis" "context" .) | nindent 8 }}
+    spec:
+      # -----------------------------------------------------------------------
+      # Node scheduling — pin to pve1
+      # -----------------------------------------------------------------------
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve1" . | nindent 8 }}
+      {{- with .Values.redis.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+
+          # Build the redis-server command with extra args from values
+          command:
+            - redis-server
+            - --dir
+            - /data
+            {{- if .Values.redis.auth.enabled }}
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            {{- end }}
+            {{- if .Values.redis.extraArgs }}
+            {{- range (splitList " " .Values.redis.extraArgs) }}
+            - {{ . | quote }}
+            {{- end }}
+            {{- end }}
+
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.port }}
+              protocol: TCP
+
+          {{- if .Values.redis.auth.enabled }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+          {{- end }}
+
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+
+          {{- if .Values.redis.storage.enabled }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: {{ .Values.redis.storage.mountPath }}
+          {{- end }}
+
+          # ------------------------------------------------------------------
+          # Probes — redis-cli ping is the simplest health check
+          # ------------------------------------------------------------------
+          {{- if .Values.redis.probes.liveness.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: {{ .Values.redis.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.redis.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.redis.probes.readiness.enabled }}
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: {{ .Values.redis.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.redis.probes.readiness.periodSeconds }}
+          {{- end }}
+
+      {{- if .Values.redis.storage.enabled }}
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data
+      {{- end }}
+{{- end }}
