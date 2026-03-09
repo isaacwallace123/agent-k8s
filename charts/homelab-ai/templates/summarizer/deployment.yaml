@@ -26,15 +26,17 @@ spec:
       labels:
         {{- include "homelab-ai.selectorLabels" (dict "component" "summarizer" "context" .) | nindent 8 }}
     spec:
-      # -----------------------------------------------------------------------
-      # Node scheduling — pin to pve2 (keeps compression off the hot path)
-      # -----------------------------------------------------------------------
       nodeSelector:
         {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
       {{- with .Values.summarizer.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+
+      # render group (109) grants access to /dev/dri/renderD128 (Intel Arc A380)
+      securityContext:
+        supplementalGroups:
+          - 109
 
       containers:
         - name: ollama
@@ -54,33 +56,32 @@ spec:
           resources:
             {{- toYaml .Values.summarizer.resources | nindent 12 }}
 
-          {{- if .Values.summarizer.storage.enabled }}
           volumeMounts:
             - name: model-storage
               mountPath: {{ .Values.summarizer.storage.mountPath }}
-          {{- end }}
+            - name: dri
+              mountPath: /dev/dri
 
-          {{- if .Values.summarizer.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
               path: {{ .Values.summarizer.probes.liveness.path }}
               port: http
             initialDelaySeconds: {{ .Values.summarizer.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.summarizer.probes.liveness.periodSeconds }}
-          {{- end }}
-          {{- if .Values.summarizer.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
               path: {{ .Values.summarizer.probes.readiness.path }}
               port: http
             initialDelaySeconds: {{ .Values.summarizer.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.summarizer.probes.readiness.periodSeconds }}
-          {{- end }}
 
-      {{- if .Values.summarizer.storage.enabled }}
       volumes:
         - name: model-storage
           persistentVolumeClaim:
             claimName: summarizer-models
-      {{- end }}
+        # Expose Intel Arc A380 GPU to the container for hardware-accelerated inference
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
 {{- end }}
