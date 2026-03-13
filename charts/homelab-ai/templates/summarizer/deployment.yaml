@@ -33,8 +33,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-      # video (44) + render (107) groups grant access to /dev/dri/* on Ubuntu 22.04.
-      # Verify with: getent group render video   (on the k3s node)
+      # render (993) + video (44) groups confirmed on k3s nodes.
       securityContext:
         supplementalGroups: {{ .Values.global.gpuGroups | toJson }}
         runAsUser: 0
@@ -48,6 +47,10 @@ spec:
           # Must source oneAPI env then run ollama serve explicitly.
           command: ["/bin/bash", "-c"]
           args: ["source /opt/intel/oneapi/setvars.sh --force && /usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs/ollama/ollama serve"]
+
+          # privileged gives level_zero access to /sys/class/drm for GPU enumeration
+          securityContext:
+            privileged: true
 
           ports:
             - name: http
@@ -67,6 +70,8 @@ spec:
               mountPath: {{ .Values.summarizer.storage.mountPath }}
             - name: dri
               mountPath: /dev/dri
+            - name: sysdrm
+              mountPath: /sys/class/drm
 
           livenessProbe:
             httpGet:
@@ -89,5 +94,10 @@ spec:
         - name: dri
           hostPath:
             path: /dev/dri
+            type: Directory
+        # level_zero enumerates GPUs via /sys/class/drm — required for SYCL device discovery
+        - name: sysdrm
+          hostPath:
+            path: /sys/class/drm
             type: Directory
 {{- end }}
