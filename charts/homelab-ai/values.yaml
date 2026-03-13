@@ -425,8 +425,6 @@ openwebui:
       value: "ollama"
     - name: RAG_EMBEDDING_MODEL
       value: "nomic-embed-text"
-    - name: OLLAMA_BASE_URL
-      value: "http://llm:11434"
     - name: RAG_OLLAMA_BASE_URL
       value: "http://embeddings:11435"
 
