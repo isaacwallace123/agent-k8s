@@ -20,6 +20,13 @@ global:
   pve1: pve1   # Primary: hot inference, vector DB, Postgres, Redis
   pve2: pve2   # Compute: embeddings, summarizer, background workers
 
+  # GIDs that grant access to /dev/dri/* on the k3s nodes.
+  # Verify with: getent group render video   (on any k3s worker node)
+  # Ubuntu 22.04 defaults: render=107, video=44
+  gpuGroups:
+    - 44   # video
+    - 107  # render
+
 # =============================================================================
 # LLM — Main coding / chat model
 # Runs on pve1 (Intel Arc B580 12GB)
@@ -61,10 +68,12 @@ llm:
 
   # Environment variables
   env:
-    - name: OLLAMA_INTEL_GPU
-      value: "true"
+    - name: OLLAMA_HOST
+      value: "0.0.0.0:11434"
     - name: ONEAPI_DEVICE_SELECTOR
       value: "level_zero:0"
+    - name: OLLAMA_NUM_GPU
+      value: "999"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -121,10 +130,10 @@ embeddings:
   # OLLAMA_HOST for embeddings is set by the deployment template (includes port 11435).
   # Do not set it here — it would create a duplicate env var.
   env:
-    - name: OLLAMA_INTEL_GPU
-      value: "true"
     - name: ONEAPI_DEVICE_SELECTOR
       value: "level_zero:0"
+    - name: OLLAMA_NUM_GPU
+      value: "999"
 
   # Pin to pve2
   nodeSelector: {}
@@ -161,10 +170,10 @@ summarizer:
   defaultModel: "qwen2.5:7b"
 
   env:
-    - name: OLLAMA_INTEL_GPU
-      value: "true"
     - name: ONEAPI_DEVICE_SELECTOR
       value: "level_zero:0"
+    - name: OLLAMA_NUM_GPU
+      value: "999"
 
   resources:
     requests:
