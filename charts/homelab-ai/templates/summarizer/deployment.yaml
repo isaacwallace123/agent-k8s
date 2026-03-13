@@ -33,10 +33,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-      # render group (993 on these nodes) grants access to /dev/dri/renderD128 (Intel Arc A380)
+      # video (44) + render (107) groups grant access to /dev/dri/* on Ubuntu 22.04.
+      # Verify with: getent group render video   (on the k3s node)
       securityContext:
-        supplementalGroups:
-          - 993
+        supplementalGroups: {{ .Values.global.gpuGroups | toJson }}
         runAsUser: 0
         runAsGroup: 0
 
