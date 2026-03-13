@@ -451,9 +451,9 @@ searxng:
 
   port: 8080
 
-  # Secret key for SearXNG session signing — change this to a random string
-  # Generate one with: openssl rand -hex 32
-  secretKey: "ab2b2fedabb2ce9cb40336b1ac7ddd38dee09002a64211a808f04d1192fff39b"
+  # Secret key is stored in a SealedSecret (templates/searxng/sealed-secret.yaml).
+  # Set this only for local helm template testing — never commit a real value here.
+  secretKey: ""
 
   resources:
     requests:
