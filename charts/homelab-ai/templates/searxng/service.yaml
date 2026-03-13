@@ -1,0 +1,21 @@
+{{- if .Values.searxng.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  # ClusterIP — internal only, OpenWebUI queries it directly inside the cluster
+  type: ClusterIP
+  selector:
+    {{- include "homelab-ai.selectorLabels" (dict "component" "searxng" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.searxng.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

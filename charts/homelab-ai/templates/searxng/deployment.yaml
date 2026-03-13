@@ -1,0 +1,75 @@
+{{- if .Values.searxng.enabled }}
+---
+# =============================================================================
+# SearXNG — Self-hosted metasearch engine
+# Scheduled on pve2 apps node (k3s-worker-node-2)
+# Used by OpenWebUI for web search augmentation (RAG + live results).
+# JSON format enabled so OpenWebUI can query it via API.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "searxng" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "searxng" "context" .) | nindent 8 }}
+    spec:
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+      {{- with .Values.searxng.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: searxng
+          image: "{{ .Values.searxng.image.repository }}:{{ .Values.searxng.image.tag }}"
+          imagePullPolicy: {{ .Values.searxng.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.searxng.port }}
+              protocol: TCP
+
+          env:
+            - name: SEARXNG_BASE_URL
+              value: "http://searxng:{{ .Values.searxng.port }}"
+
+          resources:
+            {{- toYaml .Values.searxng.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng/settings.yml
+              subPath: settings.yml
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+      volumes:
+        - name: config
+          configMap:
+            name: searxng-config
+{{- end }}
