@@ -43,6 +43,10 @@ spec:
         - name: ollama
           image: "{{ .Values.embeddings.image.repository }}:{{ .Values.embeddings.image.tag }}"
           imagePullPolicy: {{ .Values.embeddings.image.pullPolicy }}
+          # ipex-llm-inference-cpp-xpu default CMD is /bin/bash (exits immediately).
+          # Must source oneAPI env then run ollama serve explicitly.
+          command: ["/bin/bash", "-c"]
+          args: ["cd /llm && source /opt/intel/oneapi/setvars.sh --force && ./ollama serve"]
 
           ports:
             - name: http

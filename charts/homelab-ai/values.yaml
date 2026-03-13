@@ -21,11 +21,10 @@ global:
   pve2: pve2   # Compute: embeddings, summarizer, background workers
 
   # GIDs that grant access to /dev/dri/* on the k3s nodes.
-  # Verify with: getent group render video   (on any k3s worker node)
-  # Ubuntu 22.04 defaults: render=107, video=44
+  # Confirmed via: getent group render video   (on k3s-worker-node-1 and k3s-worker-node-3)
   gpuGroups:
     - 44   # video
-    - 107  # render
+    - 993  # render (confirmed on these nodes)
 
 # =============================================================================
 # LLM — Main coding / chat model
@@ -74,6 +73,10 @@ llm:
       value: "level_zero:0"
     - name: OLLAMA_NUM_GPU
       value: "999"
+    - name: ZES_ENABLE_SYSMAN
+      value: "1"
+    - name: no_proxy
+      value: "localhost,127.0.0.1"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -134,6 +137,10 @@ embeddings:
       value: "level_zero:0"
     - name: OLLAMA_NUM_GPU
       value: "999"
+    - name: ZES_ENABLE_SYSMAN
+      value: "1"
+    - name: no_proxy
+      value: "localhost,127.0.0.1"
 
   # Pin to pve2
   nodeSelector: {}
@@ -174,6 +181,10 @@ summarizer:
       value: "level_zero:0"
     - name: OLLAMA_NUM_GPU
       value: "999"
+    - name: ZES_ENABLE_SYSMAN
+      value: "1"
+    - name: no_proxy
+      value: "localhost,127.0.0.1"
 
   resources:
     requests:
