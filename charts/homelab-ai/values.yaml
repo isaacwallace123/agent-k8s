@@ -412,7 +412,56 @@ openwebui:
     storageClass: ""
     mountPath: /app/backend/data
 
-  env: []
+  env:
+    # RAG web search via SearXNG (self-hosted, no API key needed)
+    - name: ENABLE_RAG_WEB_SEARCH
+      value: "true"
+    - name: RAG_WEB_SEARCH_ENGINE
+      value: "searxng"
+    - name: SEARXNG_QUERY_URL
+      value: "http://searxng:8080/search?q=<query>&format=json"
+    # Use the dedicated embeddings service for RAG document indexing
+    - name: RAG_EMBEDDING_ENGINE
+      value: "ollama"
+    - name: RAG_EMBEDDING_MODEL
+      value: "nomic-embed-text"
+    - name: OLLAMA_BASE_URL
+      value: "http://llm:11434"
+    - name: RAG_OLLAMA_BASE_URL
+      value: "http://embeddings:11435"
+
+  # Pin to pve2 apps node (k3s-worker-node-2)
+  nodeSelector: {}
+
+  tolerations: []
+
+# =============================================================================
+# SearXNG — Self-hosted metasearch engine
+# Runs on pve2 apps node (k3s-worker-node-2)
+# Provides web search for OpenWebUI RAG without external API keys.
+# JSON format is enabled so OpenWebUI can query it programmatically.
+# =============================================================================
+searxng:
+  enabled: true
+
+  image:
+    repository: searxng/searxng
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  port: 8080
+
+  # Secret key for SearXNG session signing — change this to a random string
+  # Generate one with: openssl rand -hex 32
+  secretKey: "ab2b2fedabb2ce9cb40336b1ac7ddd38dee09002a64211a808f04d1192fff39b"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
 
   # Pin to pve2 apps node (k3s-worker-node-2)
   nodeSelector: {}
