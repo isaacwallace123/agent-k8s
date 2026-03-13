@@ -9,6 +9,9 @@ values-local.yaml
 *-secret.yaml
 *.env
 
+# SealedSecrets are encrypted and safe to commit
+!*sealed-secret.yaml
+
 # Editor
 .idea/
 .vscode/
