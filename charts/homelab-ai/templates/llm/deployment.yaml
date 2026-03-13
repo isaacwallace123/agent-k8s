@@ -48,7 +48,7 @@ spec:
           # ipex-llm-inference-cpp-xpu default CMD is /bin/bash (exits immediately).
           # Must source oneAPI env then run ollama serve explicitly.
           command: ["/bin/bash", "-c"]
-          args: ["cd /llm && source /opt/intel/oneapi/setvars.sh --force && ./ollama serve"]
+          args: ["source /opt/intel/oneapi/setvars.sh --force && ollama serve"]
 
           ports:
             - name: http
