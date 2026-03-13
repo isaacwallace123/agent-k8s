@@ -13,7 +13,8 @@ data:
     use_default_settings: true
 
     server:
-      secret_key: {{ .Values.searxng.secretKey | quote }}
+      # secret_key is injected via SEARXNG_SECRET_KEY env var from a Kubernetes Secret.
+      # Do not set it here — keep it out of Git.
       limiter: false
       image_proxy: false
       port: {{ .Values.searxng.port }}
