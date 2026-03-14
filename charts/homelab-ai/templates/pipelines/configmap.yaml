@@ -12,6 +12,7 @@ data:
 
   # ===========================================================================
   # Coding Pipeline
+  # Optional: qwen2.5vl:7b describes image
   # deepseek-r1:7b plans → qwen2.5-coder:14b implements
   # ===========================================================================
   coding_pipeline.py: |
@@ -21,93 +22,15 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:7b"
             planner_url: str = "http://summarizer:11436"
             planner_model: str = "deepseek-r1:7b"
             coder_url: str = "http://llm:11434"
             coder_model: str = "qwen2.5-coder:14b"
 
         def __init__(self):
-            self.name = "Coding Pipeline (Plan → Code)"
-            self.valves = self.Valves()
-
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
-            # Step 1: deepseek-r1:7b breaks down the task into a plan
-            plan_resp = requests.post(
-                self.valves.planner_url + "/api/chat",
-                json={
-                    "model": self.valves.planner_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a senior software architect. "
-                                "Given a coding task, produce a concise numbered implementation plan. "
-                                "Do not write code — only plan the approach and structure."
-                            )
-                        },
-                        {"role": "user", "content": user_message}
-                    ],
-                    "stream": False
-                },
-                timeout=120
-            )
-            plan = plan_resp.json()["message"]["content"]
-
-            # Step 2: qwen2.5-coder:14b implements following the plan
-            code_resp = requests.post(
-                self.valves.coder_url + "/api/chat",
-                json={
-                    "model": self.valves.coder_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an expert programmer. "
-                                "Implement the solution according to the provided plan. "
-                                "Write complete, working code with clear comments."
-                            )
-                        },
-                        {
-                            "role": "user",
-                            "content": (
-                                "Task: " + user_message
-                                + "\n\nImplementation Plan:\n" + plan
-                                + "\n\nImplement this completely now."
-                            )
-                        }
-                    ],
-                    "stream": False
-                },
-                timeout=300
-            )
-            code = code_resp.json()["message"]["content"]
-
-            return (
-                "### Plan  *(deepseek-r1:7b)*\n\n"
-                + plan
-                + "\n\n---\n\n"
-                + "### Implementation  *(qwen2.5-coder:14b)*\n\n"
-                + code
-            )
-
-  # ===========================================================================
-  # Vision Pipeline
-  # qwen2.5vl:7b describes image → deepseek-r1:14b reasons and answers
-  # ===========================================================================
-  vision_pipeline.py: |
-    from typing import List
-    from pydantic import BaseModel
-    import requests
-
-    class Pipeline:
-        class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:7b"
-            reasoning_url: str = "http://llm:11434"
-            reasoning_model: str = "deepseek-r1:14b"
-
-        def __init__(self):
-            self.name = "Vision Pipeline (Describe → Reason)"
+            self.name = "Coding Pipeline (Vision → Plan → Code)"
             self.valves = self.Valves()
 
         def _extract_images(self, messages: List[dict]) -> list:
@@ -127,47 +50,169 @@ data:
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
             images = self._extract_images(messages)
+            visual_context = ""
 
-            if not images:
-                # No image attached — fall back directly to reasoning model
-                resp = requests.post(
-                    self.valves.reasoning_url + "/api/chat",
+            # Step 1 (optional): if image attached, describe it with qwen2.5vl:7b
+            if images:
+                vision_content = [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this image in full technical detail for a software developer. "
+                            "Include all visible code, UI elements, error messages, diagrams, and text. "
+                            "The developer will ask: " + user_message
+                        )
+                    }
+                ]
+                for img_url in images:
+                    vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
+
+                vision_resp = requests.post(
+                    self.valves.vision_url + "/api/chat",
                     json={
-                        "model": self.valves.reasoning_model,
-                        "messages": messages,
+                        "model": self.valves.vision_model,
+                        "messages": [{"role": "user", "content": vision_content}],
                         "stream": False
                     },
-                    timeout=300
+                    timeout=120
                 )
-                return resp.json()["message"]["content"]
+                visual_context = vision_resp.json()["message"]["content"]
 
-            # Step 1: qwen2.5vl:7b describes the image in detail
-            vision_content = [
-                {
-                    "type": "text",
-                    "text": (
-                        "Describe this image in thorough detail. "
-                        "Note all visible text, numbers, charts, patterns, and visual elements. "
-                        "The user will ask: " + user_message
-                    )
-                }
-            ]
-            for img_url in images:
-                vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
+            # Step 2: deepseek-r1:7b creates an implementation plan
+            plan_input = user_message
+            if visual_context:
+                plan_input = "Image context:\n" + visual_context + "\n\nTask: " + user_message
 
-            vision_resp = requests.post(
-                self.valves.vision_url + "/api/chat",
+            plan_resp = requests.post(
+                self.valves.planner_url + "/api/chat",
                 json={
-                    "model": self.valves.vision_model,
-                    "messages": [{"role": "user", "content": vision_content}],
+                    "model": self.valves.planner_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a senior software architect. "
+                                "Given a coding task, produce a concise numbered implementation plan. "
+                                "Do not write code — only plan the approach and structure."
+                            )
+                        },
+                        {"role": "user", "content": plan_input}
+                    ],
                     "stream": False
                 },
                 timeout=120
             )
-            description = vision_resp.json()["message"]["content"]
+            plan = plan_resp.json()["message"]["content"]
 
-            # Step 2: deepseek-r1:14b reasons about the image and answers the question
-            reasoning_resp = requests.post(
+            # Step 3: qwen2.5-coder:14b implements the plan
+            code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan
+            if visual_context:
+                code_input = "Image context:\n" + visual_context + "\n\n" + code_input
+
+            code_resp = requests.post(
+                self.valves.coder_url + "/api/chat",
+                json={
+                    "model": self.valves.coder_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an expert programmer. "
+                                "Implement the solution according to the provided plan. "
+                                "Write complete, working code with clear comments."
+                            )
+                        },
+                        {"role": "user", "content": code_input}
+                    ],
+                    "stream": False
+                },
+                timeout=300
+            )
+            code = code_resp.json()["message"]["content"]
+
+            result = ""
+            if visual_context:
+                result += "### Image Analysis  *(qwen2.5vl:7b)*\n\n" + visual_context + "\n\n---\n\n"
+            result += "### Plan  *(deepseek-r1:7b)*\n\n" + plan + "\n\n---\n\n"
+            result += "### Implementation  *(qwen2.5-coder:14b)*\n\n" + code
+            return result
+
+  # ===========================================================================
+  # Finance Pipeline
+  # Optional: qwen2.5vl:7b describes image (charts, screenshots)
+  # deepseek-r1:14b reasons with finance-focused analysis
+  # ===========================================================================
+  finance_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:7b"
+            reasoning_url: str = "http://llm:11434"
+            reasoning_model: str = "deepseek-r1:14b"
+
+        def __init__(self):
+            self.name = "Finance Pipeline (Vision → Analysis)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = [
+                        part["image_url"]["url"]
+                        for part in content
+                        if isinstance(part, dict)
+                        and part.get("type") == "image_url"
+                        and part.get("image_url", {}).get("url")
+                    ]
+                    if images:
+                        return images
+            return []
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+            visual_context = ""
+
+            # Step 1 (optional): describe chart/screenshot with qwen2.5vl:7b
+            if images:
+                vision_content = [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this financial image in thorough detail. "
+                            "Include all visible prices, dates, percentages, trend lines, "
+                            "candlestick patterns, volume bars, indicators, and any text or labels. "
+                            "The analyst will ask: " + user_message
+                        )
+                    }
+                ]
+                for img_url in images:
+                    vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
+
+                vision_resp = requests.post(
+                    self.valves.vision_url + "/api/chat",
+                    json={
+                        "model": self.valves.vision_model,
+                        "messages": [{"role": "user", "content": vision_content}],
+                        "stream": False
+                    },
+                    timeout=120
+                )
+                visual_context = vision_resp.json()["message"]["content"]
+
+            # Step 2: deepseek-r1:14b performs financial analysis
+            analysis_input = user_message
+            if visual_context:
+                analysis_input = (
+                    "Chart/image data:\n" + visual_context
+                    + "\n\nQuestion: " + user_message
+                )
+
+            analysis_resp = requests.post(
                 self.valves.reasoning_url + "/api/chat",
                 json={
                     "model": self.valves.reasoning_model,
@@ -175,30 +220,28 @@ data:
                         {
                             "role": "system",
                             "content": (
-                                "You are an analytical assistant. "
-                                "An image has been described to you in detail. "
-                                "Reason carefully through the content and answer the user's question thoroughly."
+                                "You are a financial research analyst. "
+                                "Provide thorough, well-structured analysis with clear reasoning. "
+                                "Structure responses as: Summary → Data/Observations → Analysis → Key Risks. "
+                                "Always note that your analysis is for research purposes only, "
+                                "not financial advice."
                             )
                         },
-                        {
-                            "role": "user",
-                            "content": (
-                                "Question: " + user_message
-                                + "\n\nImage description:\n" + description
-                            )
-                        }
+                        {"role": "user", "content": analysis_input}
                     ],
                     "stream": False
                 },
                 timeout=300
             )
-            reasoning = reasoning_resp.json()["message"]["content"]
+            analysis = analysis_resp.json()["message"]["content"]
 
-            return (
-                "### Visual Description  *(qwen2.5vl:7b)*\n\n"
-                + description
-                + "\n\n---\n\n"
-                + "### Analysis  *(deepseek-r1:14b)*\n\n"
-                + reasoning
-            )
+            if visual_context:
+                return (
+                    "### Chart Analysis  *(qwen2.5vl:7b)*\n\n"
+                    + visual_context
+                    + "\n\n---\n\n"
+                    + "### Financial Analysis  *(deepseek-r1:14b)*\n\n"
+                    + analysis
+                )
+            return analysis
 {{- end }}
