@@ -11,9 +11,320 @@ metadata:
 data:
 
   # ===========================================================================
-  # Vision Pipeline
-  # qwen2.5vl:3b describes image → deepseek-r1:14b reasons/answers
-  # Both run on dedicated hardware (A380 + B580)
+  # Chat Pipeline — fast conversational chat with optional image support
+  # No image: qwen2.5:7b  (A380, ~2s)
+  # With image: qwen2.5vl:3b answers directly — single call, no chaining
+  # ===========================================================================
+  chat_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            chat_url: str = "http://summarizer:11436"
+            chat_model: str = "qwen2.5:7b"
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:3b"
+
+        def __init__(self):
+            self.name = "Chat Pipeline (Vision → Chat)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
+                    if images:
+                        return images
+            return []
+
+        def _sanitize_messages(self, messages: List[dict]) -> List[dict]:
+            sanitized = []
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [
+                        p.get("text", "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    text = " ".join(text_parts).strip()
+                    if text:
+                        sanitized.append({"role": msg["role"], "content": text})
+                else:
+                    sanitized.append(msg)
+            return sanitized
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+            clean_history = self._sanitize_messages(messages[:-1])
+            system = {"role": "system", "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."}
+
+            if images:
+                # Single call — vision model sees image and answers directly
+                resp = requests.post(
+                    self.valves.vision_url + "/api/chat",
+                    json={
+                        "model": self.valves.vision_model,
+                        "messages": [system] + clean_history + [
+                            {"role": "user", "content": user_message, "images": images}
+                        ],
+                        "stream": False
+                    },
+                    timeout=120
+                )
+            else:
+                resp = requests.post(
+                    self.valves.chat_url + "/api/chat",
+                    json={
+                        "model": self.valves.chat_model,
+                        "messages": [system] + clean_history + [
+                            {"role": "user", "content": user_message}
+                        ],
+                        "stream": False
+                    },
+                    timeout=300
+                )
+
+            data = resp.json()
+            if "message" not in data:
+                return f"Error: {data.get('error', str(data))}"
+            return data["message"]["content"]
+
+  # ===========================================================================
+  # Coding Pipeline
+  # No image:    deepseek-r1:7b plans → qwen2.5-coder:14b implements (2 calls)
+  # With image:  qwen2.5vl:3b describes → qwen2.5-coder:14b implements (2 calls,
+  #              planner skipped — image context replaces the plan step)
+  # ===========================================================================
+  coding_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:3b"
+            planner_url: str = "http://summarizer:11436"
+            planner_model: str = "deepseek-r1:7b"
+            coder_url: str = "http://llm:11434"
+            coder_model: str = "qwen2.5-coder:14b"
+
+        def __init__(self):
+            self.name = "Coding Pipeline (Vision → Plan → Code)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
+                    if images:
+                        return images
+            return []
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+
+            if images:
+                # Image path: vision describes → coder implements (skip planner)
+                vision_resp = requests.post(
+                    self.valves.vision_url + "/api/chat",
+                    json={
+                        "model": self.valves.vision_model,
+                        "messages": [{
+                            "role": "user",
+                            "content": (
+                                "Describe this image in full technical detail for a software developer. "
+                                "Include all visible code, UI elements, error messages, diagrams, and text. "
+                                "Task: " + user_message
+                            ),
+                            "images": images
+                        }],
+                        "stream": False
+                    },
+                    timeout=120
+                )
+                vision_data = vision_resp.json()
+                if "message" not in vision_data:
+                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                code_input = "Image context:\n" + vision_data["message"]["content"] + "\n\nTask: " + user_message
+            else:
+                # Text path: planner first, then coder
+                plan_resp = requests.post(
+                    self.valves.planner_url + "/api/chat",
+                    json={
+                        "model": self.valves.planner_model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are a senior software architect. "
+                                    "Given a coding task, produce a concise numbered implementation plan. "
+                                    "Do not write code — only plan the approach and structure."
+                                )
+                            },
+                            {"role": "user", "content": user_message}
+                        ],
+                        "stream": False
+                    },
+                    timeout=120
+                )
+                plan_data = plan_resp.json()
+                if "message" not in plan_data:
+                    return f"Planner error: {plan_data.get('error', str(plan_data))}"
+                code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan_data["message"]["content"]
+
+            code_resp = requests.post(
+                self.valves.coder_url + "/api/chat",
+                json={
+                    "model": self.valves.coder_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an expert programmer. "
+                                "Implement the solution according to the provided context. "
+                                "Write complete, working code with clear comments."
+                            )
+                        },
+                        {"role": "user", "content": code_input}
+                    ],
+                    "stream": False
+                },
+                timeout=300
+            )
+            code_data = code_resp.json()
+            if "message" not in code_data:
+                return f"Coder error: {code_data.get('error', str(code_data))}"
+            return code_data["message"]["content"]
+
+  # ===========================================================================
+  # Finance Pipeline
+  # qwen2.5vl:3b describes chart → deepseek-r1:14b performs financial analysis
+  # ===========================================================================
+  finance_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:3b"
+            reasoning_url: str = "http://llm:11434"
+            reasoning_model: str = "deepseek-r1:14b"
+
+        def __init__(self):
+            self.name = "Finance Pipeline (Vision → Analysis)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
+                    if images:
+                        return images
+            return []
+
+        def _sanitize_messages(self, messages: List[dict]) -> List[dict]:
+            sanitized = []
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [
+                        p.get("text", "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    text = " ".join(text_parts).strip()
+                    if text:
+                        sanitized.append({"role": msg["role"], "content": text})
+                else:
+                    sanitized.append(msg)
+            return sanitized
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+            clean_history = self._sanitize_messages(messages[:-1])
+
+            if images:
+                vision_resp = requests.post(
+                    self.valves.vision_url + "/api/chat",
+                    json={
+                        "model": self.valves.vision_model,
+                        "messages": [{
+                            "role": "user",
+                            "content": (
+                                "Describe this financial image in thorough detail. "
+                                "Include all visible prices, dates, percentages, trend lines, "
+                                "candlestick patterns, volume bars, indicators, and any text or labels. "
+                                "The analyst will ask: " + user_message
+                            ),
+                            "images": images
+                        }],
+                        "stream": False
+                    },
+                    timeout=120
+                )
+                vision_data = vision_resp.json()
+                if "message" not in vision_data:
+                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                analysis_input = "Chart/image data:\n" + vision_data["message"]["content"] + "\n\nQuestion: " + user_message
+            else:
+                analysis_input = user_message
+
+            analysis_resp = requests.post(
+                self.valves.reasoning_url + "/api/chat",
+                json={
+                    "model": self.valves.reasoning_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a financial research analyst. "
+                                "Provide thorough, well-structured analysis with clear reasoning. "
+                                "Structure responses as: Summary → Data/Observations → Analysis → Key Risks. "
+                                "Always note that your analysis is for research purposes only, "
+                                "not financial advice."
+                            )
+                        }
+                    ] + clean_history + [{"role": "user", "content": analysis_input}],
+                    "stream": False
+                },
+                timeout=300
+            )
+            analysis_data = analysis_resp.json()
+            if "message" not in analysis_data:
+                return f"Analysis error: {analysis_data.get('error', str(analysis_data))}"
+            return analysis_data["message"]["content"]
+
+  # ===========================================================================
+  # Vision Pipeline — deep image analysis with reasoning
+  # qwen2.5vl:3b describes → deepseek-r1:14b reasons (use for detailed analysis)
   # ===========================================================================
   vision_pipeline.py: |
     from typing import List
@@ -70,11 +381,7 @@ data:
                 clean = self._sanitize_messages(messages)
                 resp = requests.post(
                     self.valves.reasoning_url + "/api/chat",
-                    json={
-                        "model": self.valves.reasoning_model,
-                        "messages": clean,
-                        "stream": False
-                    },
+                    json={"model": self.valves.reasoning_model, "messages": clean, "stream": False},
                     timeout=300
                 )
                 data = resp.json()
@@ -86,17 +393,15 @@ data:
                 self.valves.vision_url + "/api/chat",
                 json={
                     "model": self.valves.vision_model,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": (
-                                "Describe this image in thorough detail. "
-                                "Note all visible text, numbers, charts, patterns, and visual elements. "
-                                "The user will ask: " + user_message
-                            ),
-                            "images": images
-                        }
-                    ],
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            "Describe this image in thorough detail. "
+                            "Note all visible text, numbers, charts, patterns, and visual elements. "
+                            "The user will ask: " + user_message
+                        ),
+                        "images": images
+                    }],
                     "stream": False
                 },
                 timeout=120
@@ -131,373 +436,12 @@ data:
             reasoning_data = reasoning_resp.json()
             if "message" not in reasoning_data:
                 return f"Reasoning error: {reasoning_data.get('error', str(reasoning_data))}"
-            reasoning = reasoning_data["message"]["content"]
 
             return (
                 "### Visual Description  *(qwen2.5vl:3b)*\n\n"
                 + description
                 + "\n\n---\n\n"
                 + "### Analysis  *(deepseek-r1:14b)*\n\n"
-                + reasoning
+                + reasoning_data["message"]["content"]
             )
-
-  # ===========================================================================
-  # Coding Pipeline
-  # Optional: qwen2.5vl:3b describes image (runs on summarizer/A380 6GB)
-  # deepseek-r1:7b plans → qwen2.5-coder:14b implements
-  # ===========================================================================
-  coding_pipeline.py: |
-    from typing import List
-    from pydantic import BaseModel
-    import requests
-
-    class Pipeline:
-        class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
-            planner_url: str = "http://summarizer:11436"
-            planner_model: str = "deepseek-r1:7b"
-            coder_url: str = "http://llm:11434"
-            coder_model: str = "qwen2.5-coder:14b"
-
-        def __init__(self):
-            self.name = "Coding Pipeline (Vision → Plan → Code)"
-            self.valves = self.Valves()
-
-        def _extract_images(self, messages: List[dict]) -> list:
-            for msg in reversed(messages):
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    images = []
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                images.append(url.split(",", 1)[1] if "," in url else url)
-                            elif url:
-                                images.append(url)
-                    if images:
-                        return images
-            return []
-
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
-            images = self._extract_images(messages)
-            visual_context = ""
-
-            if images:
-                vision_resp = requests.post(
-                    self.valves.vision_url + "/api/chat",
-                    json={
-                        "model": self.valves.vision_model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Describe this image in full technical detail for a software developer. "
-                                    "Include all visible code, UI elements, error messages, diagrams, and text. "
-                                    "The developer will ask: " + user_message
-                                ),
-                                "images": images
-                            }
-                        ],
-                        "stream": False
-                    },
-                    timeout=120
-                )
-                vision_data = vision_resp.json()
-                if "message" not in vision_data:
-                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
-                visual_context = vision_data["message"]["content"]
-
-            plan_input = user_message
-            if visual_context:
-                plan_input = "Image context:\n" + visual_context + "\n\nTask: " + user_message
-
-            plan_resp = requests.post(
-                self.valves.planner_url + "/api/chat",
-                json={
-                    "model": self.valves.planner_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a senior software architect. "
-                                "Given a coding task, produce a concise numbered implementation plan. "
-                                "Do not write code — only plan the approach and structure."
-                            )
-                        },
-                        {"role": "user", "content": plan_input}
-                    ],
-                    "stream": False
-                },
-                timeout=120
-            )
-            plan_data = plan_resp.json()
-            if "message" not in plan_data:
-                return f"Planner error: {plan_data.get('error', str(plan_data))}"
-            plan = plan_data["message"]["content"]
-
-            code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan
-            if visual_context:
-                code_input = "Image context:\n" + visual_context + "\n\n" + code_input
-
-            code_resp = requests.post(
-                self.valves.coder_url + "/api/chat",
-                json={
-                    "model": self.valves.coder_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an expert programmer. "
-                                "Implement the solution according to the provided plan. "
-                                "Write complete, working code with clear comments."
-                            )
-                        },
-                        {"role": "user", "content": code_input}
-                    ],
-                    "stream": False
-                },
-                timeout=300
-            )
-            code_data = code_resp.json()
-            if "message" not in code_data:
-                return f"Coder error: {code_data.get('error', str(code_data))}"
-            code = code_data["message"]["content"]
-
-            result = ""
-            if visual_context:
-                result += "### Image Analysis  *(qwen2.5vl:3b)*\n\n" + visual_context + "\n\n---\n\n"
-            result += "### Plan  *(deepseek-r1:7b)*\n\n" + plan + "\n\n---\n\n"
-            result += "### Implementation  *(qwen2.5-coder:14b)*\n\n" + code
-            return result
-
-  # ===========================================================================
-  # Finance Pipeline
-  # Optional: qwen2.5vl:3b describes image (charts, screenshots)
-  # deepseek-r1:14b performs financial analysis
-  # ===========================================================================
-  finance_pipeline.py: |
-    from typing import List
-    from pydantic import BaseModel
-    import requests
-
-    class Pipeline:
-        class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
-            reasoning_url: str = "http://llm:11434"
-            reasoning_model: str = "deepseek-r1:14b"
-
-        def __init__(self):
-            self.name = "Finance Pipeline (Vision → Analysis)"
-            self.valves = self.Valves()
-
-        def _extract_images(self, messages: List[dict]) -> list:
-            for msg in reversed(messages):
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    images = []
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                images.append(url.split(",", 1)[1] if "," in url else url)
-                            elif url:
-                                images.append(url)
-                    if images:
-                        return images
-            return []
-
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
-            images = self._extract_images(messages)
-            visual_context = ""
-
-            if images:
-                vision_resp = requests.post(
-                    self.valves.vision_url + "/api/chat",
-                    json={
-                        "model": self.valves.vision_model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Describe this financial image in thorough detail. "
-                                    "Include all visible prices, dates, percentages, trend lines, "
-                                    "candlestick patterns, volume bars, indicators, and any text or labels. "
-                                    "The analyst will ask: " + user_message
-                                ),
-                                "images": images
-                            }
-                        ],
-                        "stream": False
-                    },
-                    timeout=120
-                )
-                vision_data = vision_resp.json()
-                if "message" not in vision_data:
-                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
-                visual_context = vision_data["message"]["content"]
-
-            analysis_input = user_message
-            if visual_context:
-                analysis_input = "Chart/image data:\n" + visual_context + "\n\nQuestion: " + user_message
-
-            analysis_resp = requests.post(
-                self.valves.reasoning_url + "/api/chat",
-                json={
-                    "model": self.valves.reasoning_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a financial research analyst. "
-                                "Provide thorough, well-structured analysis with clear reasoning. "
-                                "Structure responses as: Summary → Data/Observations → Analysis → Key Risks. "
-                                "Always note that your analysis is for research purposes only, "
-                                "not financial advice."
-                            )
-                        },
-                        {"role": "user", "content": analysis_input}
-                    ],
-                    "stream": False
-                },
-                timeout=300
-            )
-            analysis_data = analysis_resp.json()
-            if "message" not in analysis_data:
-                return f"Analysis error: {analysis_data.get('error', str(analysis_data))}"
-            analysis = analysis_data["message"]["content"]
-
-            if visual_context:
-                return (
-                    "### Chart Analysis  *(qwen2.5vl:3b)*\n\n"
-                    + visual_context
-                    + "\n\n---\n\n"
-                    + "### Financial Analysis  *(deepseek-r1:14b)*\n\n"
-                    + analysis
-                )
-            return analysis
-
-  # ===========================================================================
-  # Chat Pipeline
-  # Optional: qwen2.5vl:3b describes image (fast, runs on summarizer/A380)
-  # qwen2.5:7b responds conversationally (fast, runs on summarizer/A380)
-  # ===========================================================================
-  chat_pipeline.py: |
-    from typing import List
-    from pydantic import BaseModel
-    import requests
-
-    class Pipeline:
-        class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
-            chat_url: str = "http://summarizer:11436"
-            chat_model: str = "qwen2.5:7b"
-
-        def __init__(self):
-            self.name = "Chat Pipeline (Vision → Chat)"
-            self.valves = self.Valves()
-
-        def _extract_images(self, messages: List[dict]) -> list:
-            for msg in reversed(messages):
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    images = []
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                images.append(url.split(",", 1)[1] if "," in url else url)
-                            elif url:
-                                images.append(url)
-                    if images:
-                        return images
-            return []
-
-        def _sanitize_messages(self, messages: List[dict]) -> List[dict]:
-            """Convert OpenAI-style image_url content to plain text for Ollama."""
-            sanitized = []
-            for msg in messages:
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    text_parts = [
-                        p.get("text", "") for p in content
-                        if isinstance(p, dict) and p.get("type") == "text"
-                    ]
-                    text = " ".join(text_parts).strip()
-                    if text:
-                        sanitized.append({"role": msg["role"], "content": text})
-                else:
-                    sanitized.append(msg)
-            return sanitized
-
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
-            images = self._extract_images(messages)
-            clean_history = self._sanitize_messages(messages[:-1])
-
-            if not images:
-                resp = requests.post(
-                    self.valves.chat_url + "/api/chat",
-                    json={
-                        "model": self.valves.chat_model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
-                            }
-                        ] + clean_history + [{"role": "user", "content": user_message}],
-                        "stream": False
-                    },
-                    timeout=300
-                )
-                data = resp.json()
-                if "message" not in data:
-                    return f"Error from chat model: {data.get('error', str(data))}"
-                return data["message"]["content"]
-
-            vision_resp = requests.post(
-                self.valves.vision_url + "/api/chat",
-                json={
-                    "model": self.valves.vision_model,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": "Describe this image in detail. The user will ask: " + user_message,
-                            "images": images
-                        }
-                    ],
-                    "stream": False
-                },
-                timeout=120
-            )
-            vision_data = vision_resp.json()
-            if "message" not in vision_data:
-                return f"Error from vision model: {vision_data.get('error', str(vision_data))}"
-            description = vision_data["message"]["content"]
-
-            chat_resp = requests.post(
-                self.valves.chat_url + "/api/chat",
-                json={
-                    "model": self.valves.chat_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
-                        }
-                    ] + clean_history + [
-                        {
-                            "role": "user",
-                            "content": "Image description:\n" + description + "\n\nUser message: " + user_message
-                        }
-                    ],
-                    "stream": False
-                },
-                timeout=300
-            )
-            chat_data = chat_resp.json()
-            if "message" not in chat_data:
-                return f"Error from chat model: {chat_data.get('error', str(chat_data))}"
-            return chat_data["message"]["content"]
 {{- end }}
