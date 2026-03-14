@@ -16,8 +16,7 @@ data:
   # With image: qwen2.5vl:3b answers directly (single call)
   # ===========================================================================
   chat_pipeline.py: |
-    import threading
-    import asyncio
+    from anyio.from_thread import run as anyio_run
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -65,13 +64,12 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        def _emit(self, __event_emitter__, description, done=False):
-            if __event_emitter__:
-                def _run():
-                    asyncio.run(__event_emitter__({"type": "status", "data": {"description": description, "done": done}}))
-                t = threading.Thread(target=_run, daemon=True)
-                t.start()
-                t.join(timeout=5)
+        def _emit(self, emitter, description, done=False):
+            if emitter:
+                try:
+                    anyio_run(emitter, {"type": "status", "data": {"description": description, "done": done}})
+                except Exception:
+                    pass
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._extract_images(messages)
@@ -118,8 +116,7 @@ data:
   # With image:  qwen2.5vl:3b describes → qwen2.5-coder:14b implements
   # ===========================================================================
   coding_pipeline.py: |
-    import threading
-    import asyncio
+    from anyio.from_thread import run as anyio_run
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -153,13 +150,12 @@ data:
                         return images
             return []
 
-        def _emit(self, __event_emitter__, description, done=False):
-            if __event_emitter__:
-                def _run():
-                    asyncio.run(__event_emitter__({"type": "status", "data": {"description": description, "done": done}}))
-                t = threading.Thread(target=_run, daemon=True)
-                t.start()
-                t.join(timeout=5)
+        def _emit(self, emitter, description, done=False):
+            if emitter:
+                try:
+                    anyio_run(emitter, {"type": "status", "data": {"description": description, "done": done}})
+                except Exception:
+                    pass
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._extract_images(messages)
@@ -244,13 +240,12 @@ data:
 
   # ===========================================================================
   # Finance Pipeline
-  # With image: analyze chart → generate search query → web search → reasoning
+  # With image: single vision call → analyze chart + generate search query →
+  #             web search → reasoning
   # No image:   use user message as search query → web search → reasoning
-  # The vision model is NEVER called without an image.
   # ===========================================================================
   finance_pipeline.py: |
-    import threading
-    import asyncio
+    from anyio.from_thread import run as anyio_run
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -320,13 +315,12 @@ data:
             except Exception as e:
                 return f"Search failed: {e}"
 
-        def _emit(self, __event_emitter__, description, done=False):
-            if __event_emitter__:
-                def _run():
-                    asyncio.run(__event_emitter__({"type": "status", "data": {"description": description, "done": done}}))
-                t = threading.Thread(target=_run, daemon=True)
-                t.start()
-                t.join(timeout=5)
+        def _emit(self, emitter, description, done=False):
+            if emitter:
+                try:
+                    anyio_run(emitter, {"type": "status", "data": {"description": description, "done": done}})
+                except Exception:
+                    pass
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._extract_images(messages)
@@ -336,7 +330,7 @@ data:
             search_query = user_message  # default: use the user's question directly
 
             if images:
-                # Step 1: Analyze the chart image
+                # Single vision call: analyze chart AND produce a search query together
                 self._emit(__event_emitter__, "Analyzing chart...")
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
@@ -345,9 +339,10 @@ data:
                         "messages": [{
                             "role": "user",
                             "content": (
-                                "Analyze this financial chart. Extract: ticker symbol or company name, "
-                                "current price, price range, trend direction, key indicators, timeframe. "
-                                "Be concise and factual."
+                                "Analyze this financial chart and respond in exactly two sections:\n\n"
+                                "ANALYSIS: <concise analysis — ticker/company, current price, trend, key indicators>\n\n"
+                                "SEARCH_QUERY: <one web search query to find current news and analyst sentiment>\n\n"
+                                f"User question: {user_message}"
                             ),
                             "images": images
                         }],
@@ -359,36 +354,23 @@ data:
                 if "message" not in vision_data:
                     self._emit(__event_emitter__, "Error", done=True)
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
-                image_analysis = vision_data["message"]["content"]
 
-                # Step 2: Generate a targeted search query from the image analysis
-                self._emit(__event_emitter__, "Generating search query...")
-                query_resp = requests.post(
-                    self.valves.vision_url + "/api/chat",
-                    json={
-                        "model": self.valves.vision_model,
-                        "messages": [{
-                            "role": "user",
-                            "content": (
-                                "Based on this financial context, write ONE concise web search query "
-                                "to find current price, news, and analyst sentiment. "
-                                "Output ONLY the search query, nothing else.\n\n"
-                                f"Chart shows: {image_analysis}\nUser asks: {user_message}"
-                            )
-                        }],
-                        "stream": False
-                    },
-                    timeout=30
-                )
-                query_data = query_resp.json()
-                if "message" in query_data:
-                    search_query = query_data["message"]["content"].strip().strip('"')
+                raw = vision_data["message"]["content"]
+                # Parse the two sections
+                if "SEARCH_QUERY:" in raw:
+                    parts = raw.split("SEARCH_QUERY:", 1)
+                    image_analysis = parts[0].replace("ANALYSIS:", "").strip()
+                    search_query = parts[1].strip().strip('"')
+                else:
+                    image_analysis = raw
+                    # Fall back: use first line as search query
+                    search_query = raw.split("\n")[0][:100]
 
-            # Step 3: Search the web (always runs)
+            # Web search
             self._emit(__event_emitter__, f"Searching: {search_query[:50]}...")
             web_results = self._web_search(search_query)
 
-            # Step 4: Final reasoning
+            # Final reasoning
             self._emit(__event_emitter__, "Thinking...")
             if image_analysis:
                 combined = f"Chart analysis:\n{image_analysis}\n\nLive web data:\n{web_results}\n\nUser question: {user_message}"
@@ -426,8 +408,7 @@ data:
   # qwen2.5vl:3b describes → deepseek-r1:14b reasons
   # ===========================================================================
   vision_pipeline.py: |
-    import threading
-    import asyncio
+    from anyio.from_thread import run as anyio_run
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -475,13 +456,12 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        def _emit(self, __event_emitter__, description, done=False):
-            if __event_emitter__:
-                def _run():
-                    asyncio.run(__event_emitter__({"type": "status", "data": {"description": description, "done": done}}))
-                t = threading.Thread(target=_run, daemon=True)
-                t.start()
-                t.join(timeout=5)
+        def _emit(self, emitter, description, done=False):
+            if emitter:
+                try:
+                    anyio_run(emitter, {"type": "status", "data": {"description": description, "done": done}})
+                except Exception:
+                    pass
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._extract_images(messages)
