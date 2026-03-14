@@ -77,8 +77,21 @@ llm:
       value: "1"
     - name: no_proxy
       value: "localhost,127.0.0.1"
+    # Keep model loaded forever — eliminates cold-start reload penalty
     - name: OLLAMA_KEEP_ALIVE
-      value: "1h"
+      value: "-1"
+    # Dedicate all VRAM to a single request (single-user homelab)
+    - name: OLLAMA_NUM_PARALLEL
+      value: "1"
+    # Prevent two models from splitting VRAM simultaneously
+    - name: OLLAMA_MAX_LOADED_MODELS
+      value: "1"
+    # Hardware-accelerated attention on Intel Arc
+    - name: OLLAMA_FLASH_ATTENTION
+      value: "1"
+    # Persist compiled SYCL/oneAPI GPU kernels — avoids recompile on pod restart
+    - name: SYCL_CACHE_PERSISTENT
+      value: "1"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -144,7 +157,15 @@ embeddings:
     - name: no_proxy
       value: "localhost,127.0.0.1"
     - name: OLLAMA_KEEP_ALIVE
-      value: "1h"
+      value: "-1"
+    - name: OLLAMA_NUM_PARALLEL
+      value: "1"
+    - name: OLLAMA_MAX_LOADED_MODELS
+      value: "1"
+    - name: OLLAMA_FLASH_ATTENTION
+      value: "1"
+    - name: SYCL_CACHE_PERSISTENT
+      value: "1"
 
   # Pin to pve2
   nodeSelector: {}
@@ -190,7 +211,15 @@ summarizer:
     - name: no_proxy
       value: "localhost,127.0.0.1"
     - name: OLLAMA_KEEP_ALIVE
-      value: "1h"
+      value: "-1"
+    - name: OLLAMA_NUM_PARALLEL
+      value: "1"
+    - name: OLLAMA_MAX_LOADED_MODELS
+      value: "1"
+    - name: OLLAMA_FLASH_ATTENTION
+      value: "1"
+    - name: SYCL_CACHE_PERSISTENT
+      value: "1"
 
   resources:
     requests:
