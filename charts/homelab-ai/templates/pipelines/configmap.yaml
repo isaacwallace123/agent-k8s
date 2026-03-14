@@ -234,7 +234,7 @@ data:
                             "model": self.valves.vision_model,
                             "messages": [{"role": "user", "content": "Describe this image in full technical detail for a software developer. Task: " + user_message, "images": images}],
                             "options": {"num_ctx": 8192}, "stream": False
-                        }, timeout=120
+                        }, timeout=300
                     )
                     vision_data = vision_resp.json()
                     if "message" not in vision_data:
@@ -254,7 +254,7 @@ data:
                             "model": self.valves.vision_model,
                             "messages": [{"role": "user", "content": "Describe this image in full technical detail for a software developer. Include all visible code, UI elements, error messages, diagrams, and text. Task: " + user_message, "images": images}],
                             "options": {"num_ctx": 8192}, "stream": False
-                        }, timeout=120
+                        }, timeout=300
                     )
                     vision_data = vision_resp.json()
                     if "message" not in vision_data:
@@ -470,7 +470,7 @@ data:
                                 f"User question: {user_message}"
                             ), "images": images}],
                             "options": {"num_ctx": 8192}, "stream": False
-                        }, timeout=120
+                        }, timeout=300
                     )
                     vision_data = vision_resp.json()
                     if "message" not in vision_data:
@@ -520,7 +520,7 @@ data:
                                 f"User question: {user_message}"
                             ), "images": images}],
                             "options": {"num_ctx": 8192}, "stream": False
-                        }, timeout=120
+                        }, timeout=300
                     )
                     vision_data = vision_resp.json()
                     if "message" not in vision_data:
@@ -685,7 +685,7 @@ data:
                         "model": self.valves.vision_model,
                         "messages": [{"role": "user", "content": "Describe this image in thorough detail. Note all visible text, numbers, charts, patterns, and visual elements. The user will ask: " + user_message, "images": images}],
                         "options": {"num_ctx": 8192}, "stream": False
-                    }, timeout=120
+                    }, timeout=300
                 )
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
@@ -711,7 +711,7 @@ data:
                         "model": self.valves.vision_model,
                         "messages": [{"role": "user", "content": "Describe this image in thorough detail. Note all visible text, numbers, charts, patterns, and visual elements. The user will ask: " + user_message, "images": images}],
                         "options": {"num_ctx": 8192}, "stream": False
-                    }, timeout=120
+                    }, timeout=300
                 )
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
