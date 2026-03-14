@@ -16,6 +16,7 @@ data:
   # With image: qwen2.5vl:3b streams
   # ===========================================================================
   chat_pipeline.py: |
+    import asyncio
     import base64
     import json
     from typing import Generator, List, Union
@@ -32,6 +33,15 @@ data:
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
             self.valves = self.Valves()
+
+        def _emit(self, emitter, description, done=False):
+            if not emitter:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+            except Exception:
+                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -95,6 +105,7 @@ data:
             system = {"role": "system", "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."}
 
             if images:
+                self._emit(__event_emitter__, "Analyzing image...")
                 url = self.valves.vision_url + "/api/chat"
                 payload = {
                     "model": self.valves.vision_model,
@@ -104,6 +115,7 @@ data:
                     "options": {"num_ctx": 8192},
                 }
             else:
+                self._emit(__event_emitter__, "Thinking...")
                 url = self.valves.chat_url + "/api/chat"
                 payload = {
                     "model": self.valves.chat_model,
@@ -128,6 +140,7 @@ data:
   # With image:  qwen2.5vl:3b describes (blocking) → qwen2.5-coder:14b streams code
   # ===========================================================================
   coding_pipeline.py: |
+    import asyncio
     import base64
     import json
     from typing import Generator, List, Union
@@ -146,6 +159,15 @@ data:
         def __init__(self):
             self.name = "Coding Pipeline (Vision → Plan → Code)"
             self.valves = self.Valves()
+
+        def _emit(self, emitter, description, done=False):
+            if not emitter:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+            except Exception:
+                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -224,6 +246,7 @@ data:
             images = self._resolve_images(messages)
 
             if images:
+                self._emit(__event_emitter__, "Analyzing image...")
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
@@ -250,11 +273,13 @@ data:
                     {"role": "system", "content": "You are an expert programmer. Write complete, working code with clear comments."},
                     {"role": "user", "content": code_input}
                 ]
+                self._emit(__event_emitter__, "Coding...")
                 if not want_stream:
                     return self._call_llm(self.valves.coder_url, self.valves.coder_model, coder_messages, 16384)
                 return self._stream_llm(self.valves.coder_url, self.valves.coder_model, coder_messages, 16384)
 
             else:
+                self._emit(__event_emitter__, "Planning...")
                 if not want_stream:
                     plan = self._call_llm(
                         self.valves.planner_url, self.valves.planner_model,
@@ -277,10 +302,12 @@ data:
 
   # ===========================================================================
   # Finance Pipeline
-  # With image: qwen2.5vl:3b analyzes chart (blocking) → web search → deepseek-r1:14b streams
-  # No image:   web search → deepseek-r1:14b streams
+  # Phase 1 (if image): qwen2.5vl:3b analyzes chart  → extract ticker + search query
+  # Phase 2:            SearXNG web search            → live market data
+  # Phase 3:            deepseek-r1:14b streams       → structured analysis
   # ===========================================================================
   finance_pipeline.py: |
+    import asyncio
     import base64
     import json
     from typing import Generator, List, Union
@@ -299,6 +326,15 @@ data:
         def __init__(self):
             self.name = "Finance Pipeline (Vision → Analysis)"
             self.valves = self.Valves()
+
+        def _emit(self, emitter, description, done=False):
+            if not emitter:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+            except Exception:
+                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -390,10 +426,12 @@ data:
             images = self._resolve_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
 
+            # ── Phase 1: Image analysis (only if image attached) ──────────────
             image_analysis = ""
-            search_query = user_message
+            search_query = user_message  # fallback if no image
 
             if images:
+                self._emit(__event_emitter__, "Analyzing image...")
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
@@ -401,9 +439,12 @@ data:
                         "messages": [{
                             "role": "user",
                             "content": (
-                                "Analyze this financial chart and respond in exactly two sections:\n\n"
-                                "ANALYSIS: <concise analysis — ticker/company, current price, trend, key indicators>\n\n"
-                                "SEARCH_QUERY: <one web search query to find current news and analyst sentiment>\n\n"
+                                "You are analyzing a financial chart or stock screenshot.\n"
+                                "Respond with exactly two labeled sections:\n\n"
+                                "ANALYSIS: <one paragraph: identify the company/ticker, current price, "
+                                "trend direction, key technical indicators visible>\n\n"
+                                "SEARCH_QUERY: <a short web search query to find the latest news and "
+                                "analyst opinions for this specific stock, e.g. 'AMZN stock analysis 2025'>\n\n"
                                 f"User question: {user_message}"
                             ),
                             "images": images
@@ -421,17 +462,31 @@ data:
                 if "SEARCH_QUERY:" in raw:
                     parts = raw.split("SEARCH_QUERY:", 1)
                     image_analysis = parts[0].replace("ANALYSIS:", "").strip()
-                    search_query = parts[1].strip().strip('"')
+                    search_query = parts[1].strip().strip('"').split("\n")[0].strip()
                 else:
-                    image_analysis = raw
-                    search_query = raw.split("\n")[0][:100]
+                    # Model didn't follow format — use full response as analysis
+                    # and extract a search query from the first sentence
+                    image_analysis = raw.strip()
+                    first_line = raw.strip().split("\n")[0][:80]
+                    search_query = first_line + " stock news"
 
+            # ── Phase 2: Web search (uses ticker from image if available) ─────
+            self._emit(__event_emitter__, f"Searching: {search_query[:50]}...")
             web_results = self._web_search(search_query)
 
+            # ── Phase 3: Build reasoning prompt ──────────────────────────────
+            self._emit(__event_emitter__, "Thinking...")
             if image_analysis:
-                combined = f"Chart analysis:\n{image_analysis}\n\nLive web data:\n{web_results}\n\nUser question: {user_message}"
+                combined = (
+                    f"Chart analysis:\n{image_analysis}\n\n"
+                    f"Live web data:\n{web_results}\n\n"
+                    f"User question: {user_message}"
+                )
             else:
-                combined = f"Live web data:\n{web_results}\n\nUser question: {user_message}"
+                combined = (
+                    f"Live web data:\n{web_results}\n\n"
+                    f"User question: {user_message}"
+                )
 
             reasoning_messages = [
                 {
@@ -468,6 +523,7 @@ data:
   # qwen2.5vl:3b describes (blocking) → deepseek-r1:14b streams reasoning
   # ===========================================================================
   vision_pipeline.py: |
+    import asyncio
     import base64
     import json
     from typing import Generator, List, Union
@@ -484,6 +540,15 @@ data:
         def __init__(self):
             self.name = "Vision Pipeline (Describe → Reason)"
             self.valves = self.Valves()
+
+        def _emit(self, emitter, description, done=False):
+            if not emitter:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+            except Exception:
+                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -555,6 +620,7 @@ data:
             images = self._resolve_images(messages)
 
             if not images:
+                self._emit(__event_emitter__, "Thinking...")
                 clean = self._sanitize_messages(messages)
                 if not want_stream:
                     resp = requests.post(
@@ -568,6 +634,7 @@ data:
                     return data["message"]["content"]
                 return self._stream_reasoning(clean)
 
+            self._emit(__event_emitter__, "Analyzing image...")
             vision_resp = requests.post(
                 self.valves.vision_url + "/api/chat",
                 json={
@@ -590,6 +657,7 @@ data:
             if "message" not in vision_data:
                 return f"Vision error: {vision_data.get('error', str(vision_data))}"
 
+            self._emit(__event_emitter__, "Reasoning...")
             reasoning_messages = [
                 {
                     "role": "system",
