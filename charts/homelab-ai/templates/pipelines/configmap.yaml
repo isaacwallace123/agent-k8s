@@ -16,7 +16,6 @@ data:
   # With image: qwen2.5vl:3b answers directly (single call)
   # ===========================================================================
   chat_pipeline.py: |
-    import asyncio
     import base64
     from typing import List
     from pydantic import BaseModel
@@ -32,11 +31,6 @@ data:
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
             self.valves = self.Valves()
-            self._loop = None
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -78,24 +72,17 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        def _emit(self, emitter, description, done=False):
-            if not emitter or not self._loop:
-                return
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    emitter({"type": "status", "data": {"description": description, "done": done}}),
-                    self._loop
-                )
-            except Exception:
-                pass
+        async def _emit(self, emitter, description, done=False):
+            if emitter:
+                await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._resolve_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
             system = {"role": "system", "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."}
 
             if images:
-                self._emit(__event_emitter__, "Analyzing image...")
+                await self._emit(__event_emitter__, "Analyzing image...")
                 resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
@@ -108,7 +95,7 @@ data:
                     timeout=120
                 )
             else:
-                self._emit(__event_emitter__, "Thinking...")
+                await self._emit(__event_emitter__, "Thinking...")
                 resp = requests.post(
                     self.valves.chat_url + "/api/chat",
                     json={
@@ -123,9 +110,9 @@ data:
 
             data = resp.json()
             if "message" not in data:
-                self._emit(__event_emitter__, "Error", done=True)
+                await self._emit(__event_emitter__, "Error", done=True)
                 return f"Error: {data.get('error', str(data))}"
-            self._emit(__event_emitter__, "Done", done=True)
+            await self._emit(__event_emitter__, "Done", done=True)
             return data["message"]["content"]
 
   # ===========================================================================
@@ -134,7 +121,6 @@ data:
   # With image:  qwen2.5vl:3b describes → qwen2.5-coder:14b implements
   # ===========================================================================
   coding_pipeline.py: |
-    import asyncio
     import base64
     from typing import List
     from pydantic import BaseModel
@@ -152,11 +138,6 @@ data:
         def __init__(self):
             self.name = "Coding Pipeline (Vision → Plan → Code)"
             self.valves = self.Valves()
-            self._loop = None
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -182,22 +163,15 @@ data:
                     return images
             return []
 
-        def _emit(self, emitter, description, done=False):
-            if not emitter or not self._loop:
-                return
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    emitter({"type": "status", "data": {"description": description, "done": done}}),
-                    self._loop
-                )
-            except Exception:
-                pass
+        async def _emit(self, emitter, description, done=False):
+            if emitter:
+                await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._resolve_images(messages)
 
             if images:
-                self._emit(__event_emitter__, "Analyzing image...")
+                await self._emit(__event_emitter__, "Analyzing image...")
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
@@ -217,11 +191,11 @@ data:
                 )
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
-                    self._emit(__event_emitter__, "Error", done=True)
+                    await self._emit(__event_emitter__, "Error", done=True)
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
                 code_input = "Image context:\n" + vision_data["message"]["content"] + "\n\nTask: " + user_message
             else:
-                self._emit(__event_emitter__, "Planning...")
+                await self._emit(__event_emitter__, "Planning...")
                 plan_resp = requests.post(
                     self.valves.planner_url + "/api/chat",
                     json={
@@ -243,11 +217,11 @@ data:
                 )
                 plan_data = plan_resp.json()
                 if "message" not in plan_data:
-                    self._emit(__event_emitter__, "Error", done=True)
+                    await self._emit(__event_emitter__, "Error", done=True)
                     return f"Planner error: {plan_data.get('error', str(plan_data))}"
                 code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan_data["message"]["content"]
 
-            self._emit(__event_emitter__, "Coding...")
+            await self._emit(__event_emitter__, "Coding...")
             code_resp = requests.post(
                 self.valves.coder_url + "/api/chat",
                 json={
@@ -269,9 +243,9 @@ data:
             )
             code_data = code_resp.json()
             if "message" not in code_data:
-                self._emit(__event_emitter__, "Error", done=True)
+                await self._emit(__event_emitter__, "Error", done=True)
                 return f"Coder error: {code_data.get('error', str(code_data))}"
-            self._emit(__event_emitter__, "Done", done=True)
+            await self._emit(__event_emitter__, "Done", done=True)
             return code_data["message"]["content"]
 
   # ===========================================================================
@@ -280,14 +254,10 @@ data:
   # No image:   use user message as search query → web search → reasoning
   # ===========================================================================
   finance_pipeline.py: |
-    import asyncio
     import base64
-    import logging
     from typing import List
     from pydantic import BaseModel
     import requests
-
-    log = logging.getLogger("finance_pipeline")
 
     class Pipeline:
         class Valves(BaseModel):
@@ -301,12 +271,6 @@ data:
         def __init__(self):
             self.name = "Finance Pipeline (Vision → Analysis)"
             self.valves = self.Valves()
-            self._loop = None
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                pass
-            log.warning(f"[FP] __init__ loop_captured={self._loop is not None}")
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -325,10 +289,9 @@ data:
                     elif url.startswith("http://") or url.startswith("https://"):
                         try:
                             r = requests.get(url, timeout=15)
-                            b64 = base64.b64encode(r.content).decode()
-                            images.append(b64)
-                        except Exception as e:
-                            log.warning(f"[FP] failed to fetch image: {e}")
+                            images.append(base64.b64encode(r.content).decode())
+                        except Exception:
+                            pass
                 if images:
                     return images
             return []
@@ -369,28 +332,19 @@ data:
             except Exception as e:
                 return f"Search failed: {e}"
 
-        def _emit(self, emitter, description, done=False):
-            if not emitter or not self._loop:
-                return
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    emitter({"type": "status", "data": {"description": description, "done": done}}),
-                    self._loop
-                )
-            except Exception:
-                pass
+        async def _emit(self, emitter, description, done=False):
+            if emitter:
+                await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
-            log.warning(f"[FP] pipe called, loop_captured={self._loop is not None}")
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._resolve_images(messages)
-            log.warning(f"[FP] images_found={len(images)} user_msg={user_message[:60]}")
             clean_history = self._sanitize_messages(messages[:-1])
 
             image_analysis = ""
             search_query = user_message
 
             if images:
-                self._emit(__event_emitter__, "Analyzing chart...")
+                await self._emit(__event_emitter__, "Analyzing chart...")
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
@@ -411,7 +365,7 @@ data:
                 )
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
-                    self._emit(__event_emitter__, "Error", done=True)
+                    await self._emit(__event_emitter__, "Error", done=True)
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
 
                 raw = vision_data["message"]["content"]
@@ -423,10 +377,10 @@ data:
                     image_analysis = raw
                     search_query = raw.split("\n")[0][:100]
 
-            self._emit(__event_emitter__, f"Searching: {search_query[:50]}...")
+            await self._emit(__event_emitter__, f"Searching: {search_query[:50]}...")
             web_results = self._web_search(search_query)
 
-            self._emit(__event_emitter__, "Thinking...")
+            await self._emit(__event_emitter__, "Thinking...")
             if image_analysis:
                 combined = f"Chart analysis:\n{image_analysis}\n\nLive web data:\n{web_results}\n\nUser question: {user_message}"
             else:
@@ -453,9 +407,9 @@ data:
             )
             analysis_data = analysis_resp.json()
             if "message" not in analysis_data:
-                self._emit(__event_emitter__, "Error", done=True)
+                await self._emit(__event_emitter__, "Error", done=True)
                 return f"Analysis error: {analysis_data.get('error', str(analysis_data))}"
-            self._emit(__event_emitter__, "Done", done=True)
+            await self._emit(__event_emitter__, "Done", done=True)
             return analysis_data["message"]["content"]
 
   # ===========================================================================
@@ -463,7 +417,6 @@ data:
   # qwen2.5vl:3b describes → deepseek-r1:14b reasons
   # ===========================================================================
   vision_pipeline.py: |
-    import asyncio
     import base64
     from typing import List
     from pydantic import BaseModel
@@ -479,11 +432,6 @@ data:
         def __init__(self):
             self.name = "Vision Pipeline (Describe → Reason)"
             self.valves = self.Valves()
-            self._loop = None
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
             for msg in reversed(messages):
@@ -525,22 +473,15 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        def _emit(self, emitter, description, done=False):
-            if not emitter or not self._loop:
-                return
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    emitter({"type": "status", "data": {"description": description, "done": done}}),
-                    self._loop
-                )
-            except Exception:
-                pass
+        async def _emit(self, emitter, description, done=False):
+            if emitter:
+                await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
             images = self._resolve_images(messages)
 
             if not images:
-                self._emit(__event_emitter__, "Thinking...")
+                await self._emit(__event_emitter__, "Thinking...")
                 clean = self._sanitize_messages(messages)
                 resp = requests.post(
                     self.valves.reasoning_url + "/api/chat",
@@ -549,12 +490,12 @@ data:
                 )
                 data = resp.json()
                 if "message" not in data:
-                    self._emit(__event_emitter__, "Error", done=True)
+                    await self._emit(__event_emitter__, "Error", done=True)
                     return f"Error: {data.get('error', str(data))}"
-                self._emit(__event_emitter__, "Done", done=True)
+                await self._emit(__event_emitter__, "Done", done=True)
                 return data["message"]["content"]
 
-            self._emit(__event_emitter__, "Analyzing image...")
+            await self._emit(__event_emitter__, "Analyzing image...")
             vision_resp = requests.post(
                 self.valves.vision_url + "/api/chat",
                 json={
@@ -574,10 +515,10 @@ data:
             )
             vision_data = vision_resp.json()
             if "message" not in vision_data:
-                self._emit(__event_emitter__, "Error", done=True)
+                await self._emit(__event_emitter__, "Error", done=True)
                 return f"Vision error: {vision_data.get('error', str(vision_data))}"
 
-            self._emit(__event_emitter__, "Reasoning...")
+            await self._emit(__event_emitter__, "Reasoning...")
             reasoning_resp = requests.post(
                 self.valves.reasoning_url + "/api/chat",
                 json={
@@ -602,10 +543,10 @@ data:
             )
             reasoning_data = reasoning_resp.json()
             if "message" not in reasoning_data:
-                self._emit(__event_emitter__, "Error", done=True)
+                await self._emit(__event_emitter__, "Error", done=True)
                 return f"Reasoning error: {reasoning_data.get('error', str(reasoning_data))}"
 
-            self._emit(__event_emitter__, "Done", done=True)
+            await self._emit(__event_emitter__, "Done", done=True)
             return (
                 "### Visual Description  *(qwen2.5vl:3b)*\n\n"
                 + vision_data["message"]["content"]
