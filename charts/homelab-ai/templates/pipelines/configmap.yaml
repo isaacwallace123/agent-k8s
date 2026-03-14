@@ -37,13 +37,14 @@ data:
             for msg in reversed(messages):
                 content = msg.get("content", "")
                 if isinstance(content, list):
-                    images = [
-                        part["image_url"]["url"]
-                        for part in content
-                        if isinstance(part, dict)
-                        and part.get("type") == "image_url"
-                        and part.get("image_url", {}).get("url")
-                    ]
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
                     if images:
                         return images
             return []
@@ -52,33 +53,28 @@ data:
             images = self._extract_images(messages)
             visual_context = ""
 
-            # Step 1 (optional): if image attached, describe it with qwen2.5vl:7b
             if images:
-                vision_content = [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Describe this image in full technical detail for a software developer. "
-                            "Include all visible code, UI elements, error messages, diagrams, and text. "
-                            "The developer will ask: " + user_message
-                        )
-                    }
-                ]
-                for img_url in images:
-                    vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
-
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
                         "model": self.valves.vision_model,
-                        "messages": [{"role": "user", "content": vision_content}],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Describe this image in full technical detail for a software developer. "
+                                    "Include all visible code, UI elements, error messages, diagrams, and text. "
+                                    "The developer will ask: " + user_message
+                                ),
+                                "images": images
+                            }
+                        ],
                         "stream": False
                     },
                     timeout=120
                 )
                 visual_context = vision_resp.json()["message"]["content"]
 
-            # Step 2: deepseek-r1:7b creates an implementation plan
             plan_input = user_message
             if visual_context:
                 plan_input = "Image context:\n" + visual_context + "\n\nTask: " + user_message
@@ -104,7 +100,6 @@ data:
             )
             plan = plan_resp.json()["message"]["content"]
 
-            # Step 3: qwen2.5-coder:14b implements the plan
             code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan
             if visual_context:
                 code_input = "Image context:\n" + visual_context + "\n\n" + code_input
@@ -140,7 +135,7 @@ data:
   # ===========================================================================
   # Finance Pipeline
   # Optional: qwen2.5vl:7b describes image (charts, screenshots)
-  # deepseek-r1:14b reasons with finance-focused analysis
+  # deepseek-r1:14b performs financial analysis
   # ===========================================================================
   finance_pipeline.py: |
     from typing import List
@@ -162,13 +157,14 @@ data:
             for msg in reversed(messages):
                 content = msg.get("content", "")
                 if isinstance(content, list):
-                    images = [
-                        part["image_url"]["url"]
-                        for part in content
-                        if isinstance(part, dict)
-                        and part.get("type") == "image_url"
-                        and part.get("image_url", {}).get("url")
-                    ]
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
                     if images:
                         return images
             return []
@@ -177,40 +173,32 @@ data:
             images = self._extract_images(messages)
             visual_context = ""
 
-            # Step 1 (optional): describe chart/screenshot with qwen2.5vl:7b
             if images:
-                vision_content = [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Describe this financial image in thorough detail. "
-                            "Include all visible prices, dates, percentages, trend lines, "
-                            "candlestick patterns, volume bars, indicators, and any text or labels. "
-                            "The analyst will ask: " + user_message
-                        )
-                    }
-                ]
-                for img_url in images:
-                    vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
-
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
                         "model": self.valves.vision_model,
-                        "messages": [{"role": "user", "content": vision_content}],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Describe this financial image in thorough detail. "
+                                    "Include all visible prices, dates, percentages, trend lines, "
+                                    "candlestick patterns, volume bars, indicators, and any text or labels. "
+                                    "The analyst will ask: " + user_message
+                                ),
+                                "images": images
+                            }
+                        ],
                         "stream": False
                     },
                     timeout=120
                 )
                 visual_context = vision_resp.json()["message"]["content"]
 
-            # Step 2: deepseek-r1:14b performs financial analysis
             analysis_input = user_message
             if visual_context:
-                analysis_input = (
-                    "Chart/image data:\n" + visual_context
-                    + "\n\nQuestion: " + user_message
-                )
+                analysis_input = "Chart/image data:\n" + visual_context + "\n\nQuestion: " + user_message
 
             analysis_resp = requests.post(
                 self.valves.reasoning_url + "/api/chat",
@@ -270,13 +258,14 @@ data:
             for msg in reversed(messages):
                 content = msg.get("content", "")
                 if isinstance(content, list):
-                    images = [
-                        part["image_url"]["url"]
-                        for part in content
-                        if isinstance(part, dict)
-                        and part.get("type") == "image_url"
-                        and part.get("image_url", {}).get("url")
-                    ]
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
                     if images:
                         return images
             return []
@@ -285,7 +274,6 @@ data:
             images = self._extract_images(messages)
 
             if not images:
-                # No image — pass full conversation history directly to chat model
                 resp = requests.post(
                     self.valves.chat_url + "/api/chat",
                     json={
@@ -302,28 +290,23 @@ data:
                 )
                 return resp.json()["message"]["content"]
 
-            # Step 1: qwen2.5vl:7b describes the image
-            vision_content = [
-                {
-                    "type": "text",
-                    "text": "Describe this image in detail. The user will ask: " + user_message
-                }
-            ]
-            for img_url in images:
-                vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
-
             vision_resp = requests.post(
                 self.valves.vision_url + "/api/chat",
                 json={
                     "model": self.valves.vision_model,
-                    "messages": [{"role": "user", "content": vision_content}],
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Describe this image in detail. The user will ask: " + user_message,
+                            "images": images
+                        }
+                    ],
                     "stream": False
                 },
                 timeout=120
             )
             description = vision_resp.json()["message"]["content"]
 
-            # Step 2: qwen2.5-coder:14b responds with image context injected
             chat_messages = [
                 {
                     "role": "system",
