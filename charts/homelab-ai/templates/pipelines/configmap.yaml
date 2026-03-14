@@ -12,7 +12,7 @@ data:
 
   # ===========================================================================
   # Coding Pipeline
-  # Optional: qwen2.5vl:7b describes image
+  # Optional: qwen2.5vl:7b describes image (runs on llm/B580 12GB)
   # deepseek-r1:7b plans → qwen2.5-coder:14b implements
   # ===========================================================================
   coding_pipeline.py: |
@@ -22,7 +22,7 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
+            vision_url: str = "http://llm:11434"
             vision_model: str = "qwen2.5vl:7b"
             planner_url: str = "http://summarizer:11436"
             planner_model: str = "deepseek-r1:7b"
@@ -144,7 +144,7 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
+            vision_url: str = "http://llm:11434"
             vision_model: str = "qwen2.5vl:7b"
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "deepseek-r1:14b"
@@ -245,7 +245,7 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
+            vision_url: str = "http://llm:11434"
             vision_model: str = "qwen2.5vl:7b"
             chat_url: str = "http://llm:11434"
             chat_model: str = "qwen2.5-coder:14b"
