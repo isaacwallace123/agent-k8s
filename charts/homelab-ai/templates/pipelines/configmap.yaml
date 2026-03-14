@@ -12,10 +12,11 @@ data:
 
   # ===========================================================================
   # Chat Pipeline — fast conversational chat with optional image support
-  # No image: qwen2.5:7b  (A380, ~2s)
+  # No image: qwen2.5:7b  (A380, single call)
   # With image: qwen2.5vl:3b answers directly — single call, no chaining
   # ===========================================================================
   chat_pipeline.py: |
+    import asyncio
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -63,14 +64,18 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+            async def emit(description, done=False):
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
+
             images = self._extract_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
             system = {"role": "system", "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."}
 
             if images:
-                # Single call — vision model sees image and answers directly
-                resp = requests.post(
+                await emit("Analyzing image...")
+                resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
                         "model": self.valves.vision_model,
@@ -80,9 +85,10 @@ data:
                         "stream": False
                     },
                     timeout=120
-                )
+                ))
             else:
-                resp = requests.post(
+                await emit("Thinking...")
+                resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.chat_url + "/api/chat",
                     json={
                         "model": self.valves.chat_model,
@@ -92,20 +98,22 @@ data:
                         "stream": False
                     },
                     timeout=300
-                )
+                ))
 
             data = resp.json()
             if "message" not in data:
+                await emit("Error", done=True)
                 return f"Error: {data.get('error', str(data))}"
+            await emit("Done", done=True)
             return data["message"]["content"]
 
   # ===========================================================================
   # Coding Pipeline
-  # No image:    deepseek-r1:7b plans → qwen2.5-coder:14b implements (2 calls)
-  # With image:  qwen2.5vl:3b describes → qwen2.5-coder:14b implements (2 calls,
-  #              planner skipped — image context replaces the plan step)
+  # No image:    deepseek-r1:7b plans → qwen2.5-coder:14b implements
+  # With image:  qwen2.5vl:3b describes → qwen2.5-coder:14b implements
   # ===========================================================================
   coding_pipeline.py: |
+    import asyncio
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -139,12 +147,16 @@ data:
                         return images
             return []
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+            async def emit(description, done=False):
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
+
             images = self._extract_images(messages)
 
             if images:
-                # Image path: vision describes → coder implements (skip planner)
-                vision_resp = requests.post(
+                await emit("Analyzing image...")
+                vision_resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
                         "model": self.valves.vision_model,
@@ -160,14 +172,15 @@ data:
                         "stream": False
                     },
                     timeout=120
-                )
+                ))
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
+                    await emit("Error", done=True)
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
                 code_input = "Image context:\n" + vision_data["message"]["content"] + "\n\nTask: " + user_message
             else:
-                # Text path: planner first, then coder
-                plan_resp = requests.post(
+                await emit("Planning...")
+                plan_resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.planner_url + "/api/chat",
                     json={
                         "model": self.valves.planner_model,
@@ -185,13 +198,15 @@ data:
                         "stream": False
                     },
                     timeout=120
-                )
+                ))
                 plan_data = plan_resp.json()
                 if "message" not in plan_data:
+                    await emit("Error", done=True)
                     return f"Planner error: {plan_data.get('error', str(plan_data))}"
                 code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan_data["message"]["content"]
 
-            code_resp = requests.post(
+            await emit("Coding...")
+            code_resp = await asyncio.to_thread(lambda: requests.post(
                 self.valves.coder_url + "/api/chat",
                 json={
                     "model": self.valves.coder_model,
@@ -209,10 +224,12 @@ data:
                     "stream": False
                 },
                 timeout=300
-            )
+            ))
             code_data = code_resp.json()
             if "message" not in code_data:
+                await emit("Error", done=True)
                 return f"Coder error: {code_data.get('error', str(code_data))}"
+            await emit("Done", done=True)
             return code_data["message"]["content"]
 
   # ===========================================================================
@@ -223,10 +240,10 @@ data:
   # 4. deepseek-r1:14b combines image analysis + live data for final answer
   # ===========================================================================
   finance_pipeline.py: |
+    import asyncio
     from typing import List
     from pydantic import BaseModel
     import requests
-    import json
 
     class Pipeline:
         class Valves(BaseModel):
@@ -293,14 +310,19 @@ data:
             except Exception as e:
                 return f"Search failed: {e}"
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+            async def emit(description, done=False):
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
+
             images = self._extract_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
 
-            # Step 1: Analyze the image if present
+            # Step 1: Analyze image
             image_analysis = ""
             if images:
-                vision_resp = requests.post(
+                await emit("Analyzing chart...")
+                vision_resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.vision_url + "/api/chat",
                     json={
                         "model": self.valves.vision_model,
@@ -317,18 +339,20 @@ data:
                         "stream": False
                     },
                     timeout=120
-                )
+                ))
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
+                    await emit("Error", done=True)
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
                 image_analysis = vision_data["message"]["content"]
 
-            # Step 2: Generate a targeted search query based on image + user question
+            # Step 2: Generate targeted search query
+            await emit("Generating search query...")
             query_context = user_message
             if image_analysis:
                 query_context = f"Image shows: {image_analysis}\nUser asks: {user_message}"
 
-            query_resp = requests.post(
+            query_resp = await asyncio.to_thread(lambda: requests.post(
                 self.valves.vision_url + "/api/chat",
                 json={
                     "model": self.valves.vision_model,
@@ -344,22 +368,24 @@ data:
                     "stream": False
                 },
                 timeout=30
-            )
+            ))
+            search_query = user_message
             query_data = query_resp.json()
-            search_query = user_message  # fallback
             if "message" in query_data:
                 search_query = query_data["message"]["content"].strip().strip('"')
 
             # Step 3: Search the web
-            web_results = self._web_search(search_query)
+            await emit(f"Searching: {search_query}...")
+            web_results = await asyncio.to_thread(lambda: self._web_search(search_query))
 
-            # Step 4: deepseek-r1:14b combines everything for final analysis
+            # Step 4: Final analysis
+            await emit("Thinking...")
             combined_input = user_message
             if image_analysis:
                 combined_input = f"Chart analysis:\n{image_analysis}\n\n"
             combined_input += f"Live web data (query: {search_query}):\n{web_results}\n\nUser question: {user_message}"
 
-            analysis_resp = requests.post(
+            analysis_resp = await asyncio.to_thread(lambda: requests.post(
                 self.valves.reasoning_url + "/api/chat",
                 json={
                     "model": self.valves.reasoning_model,
@@ -378,17 +404,20 @@ data:
                     "stream": False
                 },
                 timeout=300
-            )
+            ))
             analysis_data = analysis_resp.json()
             if "message" not in analysis_data:
+                await emit("Error", done=True)
                 return f"Analysis error: {analysis_data.get('error', str(analysis_data))}"
+            await emit("Done", done=True)
             return analysis_data["message"]["content"]
 
   # ===========================================================================
   # Vision Pipeline — deep image analysis with reasoning
-  # qwen2.5vl:3b describes → deepseek-r1:14b reasons (use for detailed analysis)
+  # qwen2.5vl:3b describes → deepseek-r1:14b reasons
   # ===========================================================================
   vision_pipeline.py: |
+    import asyncio
     from typing import List
     from pydantic import BaseModel
     import requests
@@ -436,22 +465,30 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+            async def emit(description, done=False):
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
+
             images = self._extract_images(messages)
 
             if not images:
+                await emit("Thinking...")
                 clean = self._sanitize_messages(messages)
-                resp = requests.post(
+                resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.reasoning_url + "/api/chat",
                     json={"model": self.valves.reasoning_model, "messages": clean, "stream": False},
                     timeout=300
-                )
+                ))
                 data = resp.json()
                 if "message" not in data:
+                    await emit("Error", done=True)
                     return f"Error: {data.get('error', str(data))}"
+                await emit("Done", done=True)
                 return data["message"]["content"]
 
-            vision_resp = requests.post(
+            await emit("Analyzing image...")
+            vision_resp = await asyncio.to_thread(lambda: requests.post(
                 self.valves.vision_url + "/api/chat",
                 json={
                     "model": self.valves.vision_model,
@@ -467,13 +504,15 @@ data:
                     "stream": False
                 },
                 timeout=120
-            )
+            ))
             vision_data = vision_resp.json()
             if "message" not in vision_data:
+                await emit("Error", done=True)
                 return f"Vision error: {vision_data.get('error', str(vision_data))}"
             description = vision_data["message"]["content"]
 
-            reasoning_resp = requests.post(
+            await emit("Reasoning...")
+            reasoning_resp = await asyncio.to_thread(lambda: requests.post(
                 self.valves.reasoning_url + "/api/chat",
                 json={
                     "model": self.valves.reasoning_model,
@@ -494,11 +533,13 @@ data:
                     "stream": False
                 },
                 timeout=300
-            )
+            ))
             reasoning_data = reasoning_resp.json()
             if "message" not in reasoning_data:
+                await emit("Error", done=True)
                 return f"Reasoning error: {reasoning_data.get('error', str(reasoning_data))}"
 
+            await emit("Done", done=True)
             return (
                 "### Visual Description  *(qwen2.5vl:3b)*\n\n"
                 + description
