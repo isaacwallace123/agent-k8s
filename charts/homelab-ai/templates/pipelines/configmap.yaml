@@ -73,7 +73,10 @@ data:
                     },
                     timeout=120
                 )
-                visual_context = vision_resp.json()["message"]["content"]
+                vision_data = vision_resp.json()
+                if "message" not in vision_data:
+                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                visual_context = vision_data["message"]["content"]
 
             plan_input = user_message
             if visual_context:
@@ -98,7 +101,10 @@ data:
                 },
                 timeout=120
             )
-            plan = plan_resp.json()["message"]["content"]
+            plan_data = plan_resp.json()
+            if "message" not in plan_data:
+                return f"Planner error: {plan_data.get('error', str(plan_data))}"
+            plan = plan_data["message"]["content"]
 
             code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan
             if visual_context:
@@ -123,11 +129,14 @@ data:
                 },
                 timeout=300
             )
-            code = code_resp.json()["message"]["content"]
+            code_data = code_resp.json()
+            if "message" not in code_data:
+                return f"Coder error: {code_data.get('error', str(code_data))}"
+            code = code_data["message"]["content"]
 
             result = ""
             if visual_context:
-                result += "### Image Analysis  *(qwen2.5vl:7b)*\n\n" + visual_context + "\n\n---\n\n"
+                result += "### Image Analysis  *(qwen2.5vl:3b)*\n\n" + visual_context + "\n\n---\n\n"
             result += "### Plan  *(deepseek-r1:7b)*\n\n" + plan + "\n\n---\n\n"
             result += "### Implementation  *(qwen2.5-coder:14b)*\n\n" + code
             return result
@@ -194,7 +203,10 @@ data:
                     },
                     timeout=120
                 )
-                visual_context = vision_resp.json()["message"]["content"]
+                vision_data = vision_resp.json()
+                if "message" not in vision_data:
+                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                visual_context = vision_data["message"]["content"]
 
             analysis_input = user_message
             if visual_context:
@@ -221,11 +233,14 @@ data:
                 },
                 timeout=300
             )
-            analysis = analysis_resp.json()["message"]["content"]
+            analysis_data = analysis_resp.json()
+            if "message" not in analysis_data:
+                return f"Analysis error: {analysis_data.get('error', str(analysis_data))}"
+            analysis = analysis_data["message"]["content"]
 
             if visual_context:
                 return (
-                    "### Chart Analysis  *(qwen2.5vl:7b)*\n\n"
+                    "### Chart Analysis  *(qwen2.5vl:3b)*\n\n"
                     + visual_context
                     + "\n\n---\n\n"
                     + "### Financial Analysis  *(deepseek-r1:14b)*\n\n"
@@ -236,7 +251,7 @@ data:
   # ===========================================================================
   # Chat Pipeline
   # Optional: qwen2.5vl:3b describes image (fast, runs on summarizer/A380)
-  # qwen2.5-coder:14b responds conversationally with full chat history
+  # qwen2.5:7b responds conversationally (fast, runs on summarizer/A380)
   # ===========================================================================
   chat_pipeline.py: |
     from typing import List
@@ -247,8 +262,8 @@ data:
         class Valves(BaseModel):
             vision_url: str = "http://summarizer:11436"
             vision_model: str = "qwen2.5vl:3b"
-            chat_url: str = "http://llm:11434"
-            chat_model: str = "qwen2.5-coder:14b"
+            chat_url: str = "http://summarizer:11436"
+            chat_model: str = "qwen2.5:7b"
 
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
@@ -270,8 +285,26 @@ data:
                         return images
             return []
 
+        def _sanitize_messages(self, messages: List[dict]) -> List[dict]:
+            """Convert OpenAI-style image_url content to plain text for Ollama."""
+            sanitized = []
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [
+                        p.get("text", "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    text = " ".join(text_parts).strip()
+                    if text:
+                        sanitized.append({"role": msg["role"], "content": text})
+                else:
+                    sanitized.append(msg)
+            return sanitized
+
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
             images = self._extract_images(messages)
+            clean_history = self._sanitize_messages(messages[:-1])
 
             if not images:
                 resp = requests.post(
@@ -283,12 +316,15 @@ data:
                                 "role": "system",
                                 "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
                             }
-                        ] + messages,
+                        ] + clean_history + [{"role": "user", "content": user_message}],
                         "stream": False
                     },
                     timeout=300
                 )
-                return resp.json()["message"]["content"]
+                data = resp.json()
+                if "message" not in data:
+                    return f"Error from chat model: {data.get('error', str(data))}"
+                return data["message"]["content"]
 
             vision_resp = requests.post(
                 self.valves.vision_url + "/api/chat",
@@ -305,29 +341,32 @@ data:
                 },
                 timeout=120
             )
-            description = vision_resp.json()["message"]["content"]
-
-            chat_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
-                }
-            ]
-            for msg in messages[:-1]:
-                chat_messages.append(msg)
-            chat_messages.append({
-                "role": "user",
-                "content": "Image description:\n" + description + "\n\nUser message: " + user_message
-            })
+            vision_data = vision_resp.json()
+            if "message" not in vision_data:
+                return f"Error from vision model: {vision_data.get('error', str(vision_data))}"
+            description = vision_data["message"]["content"]
 
             chat_resp = requests.post(
                 self.valves.chat_url + "/api/chat",
                 json={
                     "model": self.valves.chat_model,
-                    "messages": chat_messages,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
+                        }
+                    ] + clean_history + [
+                        {
+                            "role": "user",
+                            "content": "Image description:\n" + description + "\n\nUser message: " + user_message
+                        }
+                    ],
                     "stream": False
                 },
                 timeout=300
             )
-            return chat_resp.json()["message"]["content"]
+            chat_data = chat_resp.json()
+            if "message" not in chat_data:
+                return f"Error from chat model: {chat_data.get('error', str(chat_data))}"
+            return chat_data["message"]["content"]
 {{- end }}
