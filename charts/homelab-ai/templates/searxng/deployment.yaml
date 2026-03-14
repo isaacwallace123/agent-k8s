@@ -27,7 +27,7 @@ spec:
         {{- include "homelab-ai.selectorLabels" (dict "component" "searxng" "context" .) | nindent 8 }}
     spec:
       nodeSelector:
-        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+        {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
       {{- with .Values.searxng.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
