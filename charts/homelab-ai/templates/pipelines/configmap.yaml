@@ -90,6 +90,7 @@ data:
                         "messages": [system] + clean_history + [
                             {"role": "user", "content": user_message, "images": images}
                         ],
+                        "options": {"num_ctx": 4096},
                         "stream": False
                     },
                     timeout=120
@@ -103,6 +104,7 @@ data:
                         "messages": [system] + clean_history + [
                             {"role": "user", "content": user_message}
                         ],
+                        "options": {"num_ctx": 4096},
                         "stream": False
                     },
                     timeout=300
@@ -185,6 +187,7 @@ data:
                             ),
                             "images": images
                         }],
+                        "options": {"num_ctx": 4096},
                         "stream": False
                     },
                     timeout=120
@@ -211,6 +214,7 @@ data:
                             },
                             {"role": "user", "content": user_message}
                         ],
+                        "options": {"num_ctx": 2048},
                         "stream": False
                     },
                     timeout=120
@@ -237,6 +241,7 @@ data:
                         },
                         {"role": "user", "content": code_input}
                     ],
+                    "options": {"num_ctx": 8192},
                     "stream": False
                 },
                 timeout=300
@@ -359,6 +364,7 @@ data:
                             ),
                             "images": images
                         }],
+                        "options": {"num_ctx": 4096},
                         "stream": False
                     },
                     timeout=120
@@ -401,6 +407,7 @@ data:
                             )
                         }
                     ] + clean_history + [{"role": "user", "content": combined}],
+                    "options": {"num_ctx": 8192},
                     "stream": False
                 },
                 timeout=300
@@ -485,7 +492,7 @@ data:
                 clean = self._sanitize_messages(messages)
                 resp = requests.post(
                     self.valves.reasoning_url + "/api/chat",
-                    json={"model": self.valves.reasoning_model, "messages": clean, "stream": False},
+                    json={"model": self.valves.reasoning_model, "messages": clean, "options": {"num_ctx": 8192}, "stream": False},
                     timeout=300
                 )
                 data = resp.json()
@@ -509,6 +516,7 @@ data:
                         ),
                         "images": images
                     }],
+                    "options": {"num_ctx": 4096},
                     "stream": False
                 },
                 timeout=120
@@ -537,6 +545,7 @@ data:
                             "content": "Question: " + user_message + "\n\nImage description:\n" + vision_data["message"]["content"]
                         }
                     ],
+                    "options": {"num_ctx": 8192},
                     "stream": False
                 },
                 timeout=300
