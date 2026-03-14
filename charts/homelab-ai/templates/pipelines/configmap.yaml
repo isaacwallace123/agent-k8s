@@ -39,7 +39,6 @@ data:
                 pass
 
         def _resolve_images(self, messages: List[dict]) -> list:
-            """Extract images from messages, fetching HTTP URLs as base64."""
             for msg in reversed(messages):
                 content = msg.get("content", "")
                 if not isinstance(content, list):
@@ -83,11 +82,10 @@ data:
             if not emitter or not self._loop:
                 return
             try:
-                future = asyncio.run_coroutine_threadsafe(
+                asyncio.run_coroutine_threadsafe(
                     emitter({"type": "status", "data": {"description": description, "done": done}}),
                     self._loop
                 )
-                future.result(timeout=5)
             except Exception:
                 pass
 
@@ -188,11 +186,10 @@ data:
             if not emitter or not self._loop:
                 return
             try:
-                future = asyncio.run_coroutine_threadsafe(
+                asyncio.run_coroutine_threadsafe(
                     emitter({"type": "status", "data": {"description": description, "done": done}}),
                     self._loop
                 )
-                future.result(timeout=5)
             except Exception:
                 pass
 
@@ -309,9 +306,9 @@ data:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
                 pass
+            log.warning(f"[FP] __init__ loop_captured={self._loop is not None}")
 
         def _resolve_images(self, messages: List[dict]) -> list:
-            """Extract images from messages, fetching HTTP URLs as base64."""
             for msg in reversed(messages):
                 content = msg.get("content", "")
                 if not isinstance(content, list):
@@ -321,7 +318,6 @@ data:
                     if not isinstance(part, dict) or part.get("type") != "image_url":
                         continue
                     url = part.get("image_url", {}).get("url", "")
-                    log.warning(f"[FP] found image_url part, url_prefix={url[:80]}")
                     if not url:
                         continue
                     if url.startswith("data:"):
@@ -330,7 +326,6 @@ data:
                         try:
                             r = requests.get(url, timeout=15)
                             b64 = base64.b64encode(r.content).decode()
-                            log.warning(f"[FP] fetched HTTP image, b64_len={len(b64)}")
                             images.append(b64)
                         except Exception as e:
                             log.warning(f"[FP] failed to fetch image: {e}")
@@ -378,15 +373,15 @@ data:
             if not emitter or not self._loop:
                 return
             try:
-                future = asyncio.run_coroutine_threadsafe(
+                asyncio.run_coroutine_threadsafe(
                     emitter({"type": "status", "data": {"description": description, "done": done}}),
                     self._loop
                 )
-                future.result(timeout=5)
             except Exception:
                 pass
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+            log.warning(f"[FP] pipe called, loop_captured={self._loop is not None}")
             images = self._resolve_images(messages)
             log.warning(f"[FP] images_found={len(images)} user_msg={user_message[:60]}")
             clean_history = self._sanitize_messages(messages[:-1])
@@ -395,7 +390,6 @@ data:
             search_query = user_message
 
             if images:
-                # Single vision call: analyze chart AND produce a search query together
                 self._emit(__event_emitter__, "Analyzing chart...")
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
@@ -429,11 +423,9 @@ data:
                     image_analysis = raw
                     search_query = raw.split("\n")[0][:100]
 
-            # Web search
             self._emit(__event_emitter__, f"Searching: {search_query[:50]}...")
             web_results = self._web_search(search_query)
 
-            # Final reasoning
             self._emit(__event_emitter__, "Thinking...")
             if image_analysis:
                 combined = f"Chart analysis:\n{image_analysis}\n\nLive web data:\n{web_results}\n\nUser question: {user_message}"
@@ -537,11 +529,10 @@ data:
             if not emitter or not self._loop:
                 return
             try:
-                future = asyncio.run_coroutine_threadsafe(
+                asyncio.run_coroutine_threadsafe(
                     emitter({"type": "status", "data": {"description": description, "done": done}}),
                     self._loop
                 )
-                future.result(timeout=5)
             except Exception:
                 pass
 
