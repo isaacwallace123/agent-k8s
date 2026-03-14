@@ -77,6 +77,8 @@ llm:
       value: "1"
     - name: no_proxy
       value: "localhost,127.0.0.1"
+    - name: OLLAMA_KEEP_ALIVE
+      value: "1h"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -141,6 +143,8 @@ embeddings:
       value: "1"
     - name: no_proxy
       value: "localhost,127.0.0.1"
+    - name: OLLAMA_KEEP_ALIVE
+      value: "1h"
 
   # Pin to pve2
   nodeSelector: {}
@@ -185,6 +189,8 @@ summarizer:
       value: "1"
     - name: no_proxy
       value: "localhost,127.0.0.1"
+    - name: OLLAMA_KEEP_ALIVE
+      value: "1h"
 
   resources:
     requests:
