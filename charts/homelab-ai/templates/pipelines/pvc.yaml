@@ -1,0 +1,18 @@
+{{- if .Values.pipelines.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pipelines-data
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pipelines
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.pipelines "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.pipelines.storage.size }}
+{{- end }}

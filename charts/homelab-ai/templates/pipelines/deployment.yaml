@@ -1,0 +1,99 @@
+{{- if .Values.pipelines.enabled }}
+---
+# =============================================================================
+# OpenWebUI Pipelines — Multi-model chaining middleware
+# Scheduled on pve2 apps node (k3s-worker-node-2)
+#
+# Pipelines (mounted from ConfigMap):
+#   coding_pipeline.py  — deepseek-r1:7b plans → qwen2.5-coder:14b implements
+#   vision_pipeline.py  — qwen2.5vl:7b describes → deepseek-r1:14b reasons
+#
+# OpenWebUI connects to this as an OpenAI-compatible endpoint at port 9099.
+# Add in OpenWebUI: Admin → Settings → Connections → OpenAI API
+#   URL: http://pipelines:9099   Key: (value of pipelines.apiKey)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipelines
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "pipelines" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "pipelines" "context" .) | nindent 8 }}
+    spec:
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+      {{- with .Values.pipelines.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      initContainers:
+        # Copy pipeline Python files from ConfigMap into the writable PVC.
+        # The main container watches /app/pipelines/ — files must be writable
+        # so the pipelines service can index and reload them at startup.
+        - name: copy-pipelines
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "cp /config/*.py /app/pipelines/ && echo 'Pipelines copied successfully'"
+          volumeMounts:
+            - name: pipeline-code
+              mountPath: /config
+            - name: pipelines-data
+              mountPath: /app/pipelines
+
+      containers:
+        - name: pipelines
+          image: "{{ .Values.pipelines.image.repository }}:{{ .Values.pipelines.image.tag }}"
+          imagePullPolicy: {{ .Values.pipelines.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.pipelines.port }}
+              protocol: TCP
+
+          env:
+            - name: PIPELINES_API_KEY
+              value: {{ .Values.pipelines.apiKey | quote }}
+
+          resources:
+            {{- toYaml .Values.pipelines.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: pipelines-data
+              mountPath: /app/pipelines
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+      volumes:
+        - name: pipeline-code
+          configMap:
+            name: pipelines-code
+        - name: pipelines-data
+          persistentVolumeClaim:
+            claimName: pipelines-data
+{{- end }}

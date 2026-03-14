@@ -434,6 +434,49 @@ openwebui:
   tolerations: []
 
 # =============================================================================
+# Pipelines — OpenWebUI multi-model chaining middleware
+# Runs on pve2 apps node (k3s-worker-node-2)
+#
+# Exposes an OpenAI-compatible API at port 9099.
+# Connect in OpenWebUI: Admin → Settings → Connections → OpenAI API
+#   URL: http://pipelines:9099   Key: (pipelines.apiKey value below)
+#
+# Included pipelines:
+#   Coding Pipeline  — deepseek-r1:7b plans → qwen2.5-coder:14b implements
+#   Vision Pipeline  — qwen2.5vl:7b describes image → deepseek-r1:14b reasons
+# =============================================================================
+pipelines:
+  enabled: true
+
+  image:
+    repository: ghcr.io/open-webui/pipelines
+    tag: main
+    pullPolicy: IfNotPresent
+
+  port: 9099
+
+  # API key OpenWebUI uses to authenticate with the pipelines service.
+  # Enter this same value in OpenWebUI when adding the connection.
+  apiKey: "homelab-pipelines-key"
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  storage:
+    size: 5Gi
+    storageClass: ""
+
+  # Pin to pve2 apps node (k3s-worker-node-2)
+  nodeSelector: {}
+
+  tolerations: []
+
+# =============================================================================
 # SearXNG — Self-hosted metasearch engine
 # Runs on pve2 apps node (k3s-worker-node-2)
 # Provides web search for OpenWebUI RAG without external API keys.

@@ -1,0 +1,204 @@
+{{- if .Values.pipelines.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-code
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pipelines
+data:
+
+  # ===========================================================================
+  # Coding Pipeline
+  # deepseek-r1:7b plans → qwen2.5-coder:14b implements
+  # ===========================================================================
+  coding_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            planner_url: str = "http://summarizer:11436"
+            planner_model: str = "deepseek-r1:7b"
+            coder_url: str = "http://llm:11434"
+            coder_model: str = "qwen2.5-coder:14b"
+
+        def __init__(self):
+            self.name = "Coding Pipeline (Plan → Code)"
+            self.valves = self.Valves()
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            # Step 1: deepseek-r1:7b breaks down the task into a plan
+            plan_resp = requests.post(
+                self.valves.planner_url + "/api/chat",
+                json={
+                    "model": self.valves.planner_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a senior software architect. "
+                                "Given a coding task, produce a concise numbered implementation plan. "
+                                "Do not write code — only plan the approach and structure."
+                            )
+                        },
+                        {"role": "user", "content": user_message}
+                    ],
+                    "stream": False
+                },
+                timeout=120
+            )
+            plan = plan_resp.json()["message"]["content"]
+
+            # Step 2: qwen2.5-coder:14b implements following the plan
+            code_resp = requests.post(
+                self.valves.coder_url + "/api/chat",
+                json={
+                    "model": self.valves.coder_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an expert programmer. "
+                                "Implement the solution according to the provided plan. "
+                                "Write complete, working code with clear comments."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                "Task: " + user_message
+                                + "\n\nImplementation Plan:\n" + plan
+                                + "\n\nImplement this completely now."
+                            )
+                        }
+                    ],
+                    "stream": False
+                },
+                timeout=300
+            )
+            code = code_resp.json()["message"]["content"]
+
+            return (
+                "### Plan  *(deepseek-r1:7b)*\n\n"
+                + plan
+                + "\n\n---\n\n"
+                + "### Implementation  *(qwen2.5-coder:14b)*\n\n"
+                + code
+            )
+
+  # ===========================================================================
+  # Vision Pipeline
+  # qwen2.5vl:7b describes image → deepseek-r1:14b reasons and answers
+  # ===========================================================================
+  vision_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:7b"
+            reasoning_url: str = "http://llm:11434"
+            reasoning_model: str = "deepseek-r1:14b"
+
+        def __init__(self):
+            self.name = "Vision Pipeline (Describe → Reason)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = [
+                        part["image_url"]["url"]
+                        for part in content
+                        if isinstance(part, dict)
+                        and part.get("type") == "image_url"
+                        and part.get("image_url", {}).get("url")
+                    ]
+                    if images:
+                        return images
+            return []
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+
+            if not images:
+                # No image attached — fall back directly to reasoning model
+                resp = requests.post(
+                    self.valves.reasoning_url + "/api/chat",
+                    json={
+                        "model": self.valves.reasoning_model,
+                        "messages": messages,
+                        "stream": False
+                    },
+                    timeout=300
+                )
+                return resp.json()["message"]["content"]
+
+            # Step 1: qwen2.5vl:7b describes the image in detail
+            vision_content = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Describe this image in thorough detail. "
+                        "Note all visible text, numbers, charts, patterns, and visual elements. "
+                        "The user will ask: " + user_message
+                    )
+                }
+            ]
+            for img_url in images:
+                vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
+
+            vision_resp = requests.post(
+                self.valves.vision_url + "/api/chat",
+                json={
+                    "model": self.valves.vision_model,
+                    "messages": [{"role": "user", "content": vision_content}],
+                    "stream": False
+                },
+                timeout=120
+            )
+            description = vision_resp.json()["message"]["content"]
+
+            # Step 2: deepseek-r1:14b reasons about the image and answers the question
+            reasoning_resp = requests.post(
+                self.valves.reasoning_url + "/api/chat",
+                json={
+                    "model": self.valves.reasoning_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an analytical assistant. "
+                                "An image has been described to you in detail. "
+                                "Reason carefully through the content and answer the user's question thoroughly."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                "Question: " + user_message
+                                + "\n\nImage description:\n" + description
+                            )
+                        }
+                    ],
+                    "stream": False
+                },
+                timeout=300
+            )
+            reasoning = reasoning_resp.json()["message"]["content"]
+
+            return (
+                "### Visual Description  *(qwen2.5vl:7b)*\n\n"
+                + description
+                + "\n\n---\n\n"
+                + "### Analysis  *(deepseek-r1:14b)*\n\n"
+                + reasoning
+            )
+{{- end }}
