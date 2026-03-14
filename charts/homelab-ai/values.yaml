@@ -95,6 +95,10 @@ llm:
     # Overflow beyond that spills to 48GB DDR4 via 13700KF — still fast
     - name: OLLAMA_KV_CACHE_TYPE
       value: "q8_0"
+    # Lock context window — prevents model reload when pipeline requests num_ctx=16384
+    # Without this, Ollama reloads the full model (~20s SYCL init) on every context mismatch
+    - name: OLLAMA_CONTEXT_LENGTH
+      value: "16384"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -229,6 +233,9 @@ summarizer:
     # 7b/3b models have tiny KV caches — q8_0 barely needed but consistent
     - name: OLLAMA_KV_CACHE_TYPE
       value: "q8_0"
+    # Vision calls use num_ctx=8192 — lock to prevent reload on context mismatch
+    - name: OLLAMA_CONTEXT_LENGTH
+      value: "8192"
 
   resources:
     requests:
