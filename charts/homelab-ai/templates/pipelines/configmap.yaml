@@ -217,12 +217,16 @@ data:
 
   # ===========================================================================
   # Finance Pipeline
-  # qwen2.5vl:3b describes chart → deepseek-r1:14b performs financial analysis
+  # 1. qwen2.5vl:3b analyzes chart/image
+  # 2. qwen2.5vl:3b generates a focused web search query from the analysis
+  # 3. SearXNG fetches current news/data
+  # 4. deepseek-r1:14b combines image analysis + live data for final answer
   # ===========================================================================
   finance_pipeline.py: |
     from typing import List
     from pydantic import BaseModel
     import requests
+    import json
 
     class Pipeline:
         class Valves(BaseModel):
@@ -230,6 +234,8 @@ data:
             vision_model: str = "qwen2.5vl:3b"
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "deepseek-r1:14b"
+            searxng_url: str = "http://searxng:8080/search"
+            search_results: int = 5
 
         def __init__(self):
             self.name = "Finance Pipeline (Vision → Analysis)"
@@ -267,10 +273,32 @@ data:
                     sanitized.append(msg)
             return sanitized
 
+        def _web_search(self, query: str) -> str:
+            try:
+                resp = requests.get(
+                    self.valves.searxng_url,
+                    params={"q": query, "format": "json", "categories": "news,general"},
+                    timeout=10
+                )
+                results = resp.json().get("results", [])[:self.valves.search_results]
+                if not results:
+                    return "No web results found."
+                lines = []
+                for r in results:
+                    title = r.get("title", "")
+                    content = r.get("content", "")
+                    url = r.get("url", "")
+                    lines.append(f"- {title}: {content} ({url})")
+                return "\n".join(lines)
+            except Exception as e:
+                return f"Search failed: {e}"
+
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
             images = self._extract_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
 
+            # Step 1: Analyze the image if present
+            image_analysis = ""
             if images:
                 vision_resp = requests.post(
                     self.valves.vision_url + "/api/chat",
@@ -279,10 +307,10 @@ data:
                         "messages": [{
                             "role": "user",
                             "content": (
-                                "Describe this financial image in thorough detail. "
-                                "Include all visible prices, dates, percentages, trend lines, "
-                                "candlestick patterns, volume bars, indicators, and any text or labels. "
-                                "The analyst will ask: " + user_message
+                                "Analyze this financial chart or image. "
+                                "Extract: ticker symbol or company name, current price, "
+                                "price range, trend direction, key indicators, and timeframe. "
+                                "Be concise and factual."
                             ),
                             "images": images
                         }],
@@ -293,9 +321,43 @@ data:
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
-                analysis_input = "Chart/image data:\n" + vision_data["message"]["content"] + "\n\nQuestion: " + user_message
-            else:
-                analysis_input = user_message
+                image_analysis = vision_data["message"]["content"]
+
+            # Step 2: Generate a targeted search query based on image + user question
+            query_context = user_message
+            if image_analysis:
+                query_context = f"Image shows: {image_analysis}\nUser asks: {user_message}"
+
+            query_resp = requests.post(
+                self.valves.vision_url + "/api/chat",
+                json={
+                    "model": self.valves.vision_model,
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            "Based on this context, write a single concise web search query "
+                            "to find current financial news, price, and analyst sentiment. "
+                            "Output ONLY the search query, nothing else.\n\n"
+                            + query_context
+                        )
+                    }],
+                    "stream": False
+                },
+                timeout=30
+            )
+            query_data = query_resp.json()
+            search_query = user_message  # fallback
+            if "message" in query_data:
+                search_query = query_data["message"]["content"].strip().strip('"')
+
+            # Step 3: Search the web
+            web_results = self._web_search(search_query)
+
+            # Step 4: deepseek-r1:14b combines everything for final analysis
+            combined_input = user_message
+            if image_analysis:
+                combined_input = f"Chart analysis:\n{image_analysis}\n\n"
+            combined_input += f"Live web data (query: {search_query}):\n{web_results}\n\nUser question: {user_message}"
 
             analysis_resp = requests.post(
                 self.valves.reasoning_url + "/api/chat",
@@ -306,13 +368,13 @@ data:
                             "role": "system",
                             "content": (
                                 "You are a financial research analyst. "
-                                "Provide thorough, well-structured analysis with clear reasoning. "
-                                "Structure responses as: Summary → Data/Observations → Analysis → Key Risks. "
-                                "Always note that your analysis is for research purposes only, "
-                                "not financial advice."
+                                "You have been given chart data and live web search results. "
+                                "Provide thorough, well-structured analysis. "
+                                "Structure: Summary → Chart Observations → Current Data → Analysis → Key Risks. "
+                                "This is for research purposes only, not financial advice."
                             )
                         }
-                    ] + clean_history + [{"role": "user", "content": analysis_input}],
+                    ] + clean_history + [{"role": "user", "content": combined_input}],
                     "stream": False
                 },
                 timeout=300
