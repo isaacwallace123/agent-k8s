@@ -33,14 +33,19 @@ data:
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
             self.valves = self.Valves()
+            try:
+                self._loop = asyncio.get_event_loop()
+            except Exception:
+                self._loop = None
 
         def _emit(self, emitter, description, done=False):
-            """Schedule a status event on the running event loop."""
-            if not emitter:
+            if not emitter or not getattr(self, "_loop", None):
                 return
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+                asyncio.run_coroutine_threadsafe(
+                    emitter({"type": "status", "data": {"description": description, "done": done}}),
+                    self._loop
+                ).result(timeout=2)
             except Exception:
                 pass
 
@@ -179,13 +184,19 @@ data:
         def __init__(self):
             self.name = "Coding Pipeline (Vision → Plan → Code)"
             self.valves = self.Valves()
+            try:
+                self._loop = asyncio.get_event_loop()
+            except Exception:
+                self._loop = None
 
         def _emit(self, emitter, description, done=False):
-            if not emitter:
+            if not emitter or not getattr(self, "_loop", None):
                 return
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+                asyncio.run_coroutine_threadsafe(
+                    emitter({"type": "status", "data": {"description": description, "done": done}}),
+                    self._loop
+                ).result(timeout=2)
             except Exception:
                 pass
 
@@ -378,13 +389,19 @@ data:
         def __init__(self):
             self.name = "Finance Pipeline (Vision → Analysis)"
             self.valves = self.Valves()
+            try:
+                self._loop = asyncio.get_event_loop()
+            except Exception:
+                self._loop = None
 
         def _emit(self, emitter, description, done=False):
-            if not emitter:
+            if not emitter or not getattr(self, "_loop", None):
                 return
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+                asyncio.run_coroutine_threadsafe(
+                    emitter({"type": "status", "data": {"description": description, "done": done}}),
+                    self._loop
+                ).result(timeout=2)
             except Exception:
                 pass
 
@@ -590,13 +607,19 @@ data:
         def __init__(self):
             self.name = "Vision Pipeline (Describe → Reason)"
             self.valves = self.Valves()
+            try:
+                self._loop = asyncio.get_event_loop()
+            except Exception:
+                self._loop = None
 
         def _emit(self, emitter, description, done=False):
-            if not emitter:
+            if not emitter or not getattr(self, "_loop", None):
                 return
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(emitter({"type": "status", "data": {"description": description, "done": done}}))
+                asyncio.run_coroutine_threadsafe(
+                    emitter({"type": "status", "data": {"description": description, "done": done}}),
+                    self._loop
+                ).result(timeout=2)
             except Exception:
                 pass
 
