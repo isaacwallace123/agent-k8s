@@ -1,0 +1,20 @@
+{{- if .Values.pipelines.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipelines
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pipelines
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "homelab-ai.selectorLabels" (dict "component" "pipelines" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.pipelines.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
