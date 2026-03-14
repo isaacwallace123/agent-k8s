@@ -244,4 +244,107 @@ data:
                     + analysis
                 )
             return analysis
+
+  # ===========================================================================
+  # Chat Pipeline
+  # Optional: qwen2.5vl:7b describes image
+  # qwen2.5-coder:14b responds conversationally with full chat history
+  # ===========================================================================
+  chat_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:7b"
+            chat_url: str = "http://llm:11434"
+            chat_model: str = "qwen2.5-coder:14b"
+
+        def __init__(self):
+            self.name = "Chat Pipeline (Vision → Chat)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = [
+                        part["image_url"]["url"]
+                        for part in content
+                        if isinstance(part, dict)
+                        and part.get("type") == "image_url"
+                        and part.get("image_url", {}).get("url")
+                    ]
+                    if images:
+                        return images
+            return []
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+
+            if not images:
+                # No image — pass full conversation history directly to chat model
+                resp = requests.post(
+                    self.valves.chat_url + "/api/chat",
+                    json={
+                        "model": self.valves.chat_model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
+                            }
+                        ] + messages,
+                        "stream": False
+                    },
+                    timeout=300
+                )
+                return resp.json()["message"]["content"]
+
+            # Step 1: qwen2.5vl:7b describes the image
+            vision_content = [
+                {
+                    "type": "text",
+                    "text": "Describe this image in detail. The user will ask: " + user_message
+                }
+            ]
+            for img_url in images:
+                vision_content.append({"type": "image_url", "image_url": {"url": img_url}})
+
+            vision_resp = requests.post(
+                self.valves.vision_url + "/api/chat",
+                json={
+                    "model": self.valves.vision_model,
+                    "messages": [{"role": "user", "content": vision_content}],
+                    "stream": False
+                },
+                timeout=120
+            )
+            description = vision_resp.json()["message"]["content"]
+
+            # Step 2: qwen2.5-coder:14b responds with image context injected
+            chat_messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."
+                }
+            ]
+            for msg in messages[:-1]:
+                chat_messages.append(msg)
+            chat_messages.append({
+                "role": "user",
+                "content": "Image description:\n" + description + "\n\nUser message: " + user_message
+            })
+
+            chat_resp = requests.post(
+                self.valves.chat_url + "/api/chat",
+                json={
+                    "model": self.valves.chat_model,
+                    "messages": chat_messages,
+                    "stream": False
+                },
+                timeout=300
+            )
+            return chat_resp.json()["message"]["content"]
 {{- end }}
