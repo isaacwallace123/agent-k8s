@@ -48,14 +48,13 @@ llm:
   defaultModel: "qwen2.5-coder:14b"
 
   # Resource requests/limits
-  # Leave limits unset to let the container use all available GPU memory
   resources:
     requests:
-      cpu: "2"
-      memory: "8Gi"
+      cpu: "4"
+      memory: "16Gi"
     limits:
-      cpu: "8"
-      memory: "24Gi"
+      cpu: "16"    # 13700KF has 16 threads — available for KV cache spill beyond 16K ctx
+      memory: "44Gi"  # allows 16K in VRAM + large context spill into 48GB DDR4
       # gpu.intel.com/xe: 1
 
   # PVC for model files — mounted on SATA SSD via local-path
@@ -92,6 +91,10 @@ llm:
     # Persist compiled SYCL/oneAPI GPU kernels — avoids recompile on pod restart
     - name: SYCL_CACHE_PERSISTENT
       value: "1"
+    # Halve KV cache VRAM usage — 14b models get ~16K ctx fully in VRAM (3.5GB free)
+    # Overflow beyond that spills to 48GB DDR4 via 13700KF — still fast
+    - name: OLLAMA_KV_CACHE_TYPE
+      value: "q8_0"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -166,6 +169,9 @@ embeddings:
       value: "1"
     - name: SYCL_CACHE_PERSISTENT
       value: "1"
+    # 7b models have tiny KV caches (~28KB/token) — q8_0 barely needed but consistent
+    - name: OLLAMA_KV_CACHE_TYPE
+      value: "q8_0"
 
   # Pin to pve2
   nodeSelector: {}
@@ -220,14 +226,17 @@ summarizer:
       value: "1"
     - name: SYCL_CACHE_PERSISTENT
       value: "1"
+    # 7b/3b models have tiny KV caches — q8_0 barely needed but consistent
+    - name: OLLAMA_KV_CACHE_TYPE
+      value: "q8_0"
 
   resources:
     requests:
-      cpu: "1"
-      memory: "4Gi"
-    limits:
-      cpu: "4"
+      cpu: "2"
       memory: "8Gi"
+    limits:
+      cpu: "6"     # R5 5500 has 6 threads — use them all for KV cache spill to RAM
+      memory: "28Gi"  # headroom for large context KV cache overflow into 32GB DDR4
       # gpu.intel.com/xe: 1
 
   storage:
