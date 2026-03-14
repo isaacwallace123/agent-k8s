@@ -11,6 +11,137 @@ metadata:
 data:
 
   # ===========================================================================
+  # Vision Pipeline
+  # qwen2.5vl:3b describes image → deepseek-r1:14b reasons/answers
+  # Both run on dedicated hardware (A380 + B580)
+  # ===========================================================================
+  vision_pipeline.py: |
+    from typing import List
+    from pydantic import BaseModel
+    import requests
+
+    class Pipeline:
+        class Valves(BaseModel):
+            vision_url: str = "http://summarizer:11436"
+            vision_model: str = "qwen2.5vl:3b"
+            reasoning_url: str = "http://llm:11434"
+            reasoning_model: str = "deepseek-r1:14b"
+
+        def __init__(self):
+            self.name = "Vision Pipeline (Describe → Reason)"
+            self.valves = self.Valves()
+
+        def _extract_images(self, messages: List[dict]) -> list:
+            for msg in reversed(messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    images = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                images.append(url.split(",", 1)[1] if "," in url else url)
+                            elif url:
+                                images.append(url)
+                    if images:
+                        return images
+            return []
+
+        def _sanitize_messages(self, messages: List[dict]) -> List[dict]:
+            sanitized = []
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [
+                        p.get("text", "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    text = " ".join(text_parts).strip()
+                    if text:
+                        sanitized.append({"role": msg["role"], "content": text})
+                else:
+                    sanitized.append(msg)
+            return sanitized
+
+        def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> str:
+            images = self._extract_images(messages)
+
+            if not images:
+                clean = self._sanitize_messages(messages)
+                resp = requests.post(
+                    self.valves.reasoning_url + "/api/chat",
+                    json={
+                        "model": self.valves.reasoning_model,
+                        "messages": clean,
+                        "stream": False
+                    },
+                    timeout=300
+                )
+                data = resp.json()
+                if "message" not in data:
+                    return f"Error: {data.get('error', str(data))}"
+                return data["message"]["content"]
+
+            vision_resp = requests.post(
+                self.valves.vision_url + "/api/chat",
+                json={
+                    "model": self.valves.vision_model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Describe this image in thorough detail. "
+                                "Note all visible text, numbers, charts, patterns, and visual elements. "
+                                "The user will ask: " + user_message
+                            ),
+                            "images": images
+                        }
+                    ],
+                    "stream": False
+                },
+                timeout=120
+            )
+            vision_data = vision_resp.json()
+            if "message" not in vision_data:
+                return f"Vision error: {vision_data.get('error', str(vision_data))}"
+            description = vision_data["message"]["content"]
+
+            reasoning_resp = requests.post(
+                self.valves.reasoning_url + "/api/chat",
+                json={
+                    "model": self.valves.reasoning_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an analytical assistant. "
+                                "An image has been described to you in detail. "
+                                "Reason carefully through the content and answer the user's question thoroughly."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": "Question: " + user_message + "\n\nImage description:\n" + description
+                        }
+                    ],
+                    "stream": False
+                },
+                timeout=300
+            )
+            reasoning_data = reasoning_resp.json()
+            if "message" not in reasoning_data:
+                return f"Reasoning error: {reasoning_data.get('error', str(reasoning_data))}"
+            reasoning = reasoning_data["message"]["content"]
+
+            return (
+                "### Visual Description  *(qwen2.5vl:3b)*\n\n"
+                + description
+                + "\n\n---\n\n"
+                + "### Analysis  *(deepseek-r1:14b)*\n\n"
+                + reasoning
+            )
+
+  # ===========================================================================
   # Coding Pipeline
   # Optional: qwen2.5vl:3b describes image (runs on summarizer/A380 6GB)
   # deepseek-r1:7b plans → qwen2.5-coder:14b implements
