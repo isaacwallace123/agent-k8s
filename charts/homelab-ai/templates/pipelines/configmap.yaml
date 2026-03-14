@@ -12,12 +12,12 @@ data:
 
   # ===========================================================================
   # Chat Pipeline — fast conversational chat with optional image support
-  # No image: qwen2.5:7b  (A380, single call)
-  # With image: qwen2.5vl:3b answers directly — single call, no chaining
+  # No image: qwen2.5:7b (single call)
+  # With image: qwen2.5vl:3b answers directly (single call)
   # ===========================================================================
   chat_pipeline.py: |
     import asyncio
-    from typing import List
+    from typing import List, Callable, Awaitable, Any, Optional
     from pydantic import BaseModel
     import requests
 
@@ -64,7 +64,14 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(
+            self,
+            user_message: str,
+            model_id: str,
+            messages: List[dict],
+            body: dict,
+            __event_emitter__: Callable[[Any], Awaitable[None]] = None,
+        ) -> str:
             async def emit(description, done=False):
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
@@ -114,7 +121,7 @@ data:
   # ===========================================================================
   coding_pipeline.py: |
     import asyncio
-    from typing import List
+    from typing import List, Callable, Awaitable, Any
     from pydantic import BaseModel
     import requests
 
@@ -147,7 +154,14 @@ data:
                         return images
             return []
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(
+            self,
+            user_message: str,
+            model_id: str,
+            messages: List[dict],
+            body: dict,
+            __event_emitter__: Callable[[Any], Awaitable[None]] = None,
+        ) -> str:
             async def emit(description, done=False):
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
@@ -234,14 +248,13 @@ data:
 
   # ===========================================================================
   # Finance Pipeline
-  # 1. qwen2.5vl:3b analyzes chart/image
-  # 2. qwen2.5vl:3b generates a focused web search query from the analysis
-  # 3. SearXNG fetches current news/data
-  # 4. deepseek-r1:14b combines image analysis + live data for final answer
+  # With image: analyze chart → generate search query → web search → reasoning
+  # No image:   use user message as search query → web search → reasoning
+  # The vision model is NEVER called without an image.
   # ===========================================================================
   finance_pipeline.py: |
     import asyncio
-    from typing import List
+    from typing import List, Callable, Awaitable, Any
     from pydantic import BaseModel
     import requests
 
@@ -310,7 +323,14 @@ data:
             except Exception as e:
                 return f"Search failed: {e}"
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(
+            self,
+            user_message: str,
+            model_id: str,
+            messages: List[dict],
+            body: dict,
+            __event_emitter__: Callable[[Any], Awaitable[None]] = None,
+        ) -> str:
             async def emit(description, done=False):
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
@@ -318,9 +338,11 @@ data:
             images = self._extract_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
 
-            # Step 1: Analyze image
             image_analysis = ""
+            search_query = user_message  # default: use the user's question directly
+
             if images:
+                # Step 1: Analyze the chart image
                 await emit("Analyzing chart...")
                 vision_resp = await asyncio.to_thread(lambda: requests.post(
                     self.valves.vision_url + "/api/chat",
@@ -329,9 +351,8 @@ data:
                         "messages": [{
                             "role": "user",
                             "content": (
-                                "Analyze this financial chart or image. "
-                                "Extract: ticker symbol or company name, current price, "
-                                "price range, trend direction, key indicators, and timeframe. "
+                                "Analyze this financial chart. Extract: ticker symbol or company name, "
+                                "current price, price range, trend direction, key indicators, timeframe. "
                                 "Be concise and factual."
                             ),
                             "images": images
@@ -346,44 +367,39 @@ data:
                     return f"Vision error: {vision_data.get('error', str(vision_data))}"
                 image_analysis = vision_data["message"]["content"]
 
-            # Step 2: Generate targeted search query
-            await emit("Generating search query...")
-            query_context = user_message
-            if image_analysis:
-                query_context = f"Image shows: {image_analysis}\nUser asks: {user_message}"
+                # Step 2: Generate a targeted search query from the image analysis
+                await emit("Generating search query...")
+                query_resp = await asyncio.to_thread(lambda: requests.post(
+                    self.valves.vision_url + "/api/chat",
+                    json={
+                        "model": self.valves.vision_model,
+                        "messages": [{
+                            "role": "user",
+                            "content": (
+                                "Based on this financial context, write ONE concise web search query "
+                                "to find current price, news, and analyst sentiment. "
+                                "Output ONLY the search query, nothing else.\n\n"
+                                f"Chart shows: {image_analysis}\nUser asks: {user_message}"
+                            )
+                        }],
+                        "stream": False
+                    },
+                    timeout=30
+                ))
+                query_data = query_resp.json()
+                if "message" in query_data:
+                    search_query = query_data["message"]["content"].strip().strip('"')
 
-            query_resp = await asyncio.to_thread(lambda: requests.post(
-                self.valves.vision_url + "/api/chat",
-                json={
-                    "model": self.valves.vision_model,
-                    "messages": [{
-                        "role": "user",
-                        "content": (
-                            "Based on this context, write a single concise web search query "
-                            "to find current financial news, price, and analyst sentiment. "
-                            "Output ONLY the search query, nothing else.\n\n"
-                            + query_context
-                        )
-                    }],
-                    "stream": False
-                },
-                timeout=30
-            ))
-            search_query = user_message
-            query_data = query_resp.json()
-            if "message" in query_data:
-                search_query = query_data["message"]["content"].strip().strip('"')
-
-            # Step 3: Search the web
-            await emit(f"Searching: {search_query}...")
+            # Step 3: Search the web (always runs)
+            await emit(f"Searching: {search_query[:50]}...")
             web_results = await asyncio.to_thread(lambda: self._web_search(search_query))
 
-            # Step 4: Final analysis
+            # Step 4: Final reasoning
             await emit("Thinking...")
-            combined_input = user_message
             if image_analysis:
-                combined_input = f"Chart analysis:\n{image_analysis}\n\n"
-            combined_input += f"Live web data (query: {search_query}):\n{web_results}\n\nUser question: {user_message}"
+                combined = f"Chart analysis:\n{image_analysis}\n\nLive web data:\n{web_results}\n\nUser question: {user_message}"
+            else:
+                combined = f"Live web data:\n{web_results}\n\nUser question: {user_message}"
 
             analysis_resp = await asyncio.to_thread(lambda: requests.post(
                 self.valves.reasoning_url + "/api/chat",
@@ -394,13 +410,12 @@ data:
                             "role": "system",
                             "content": (
                                 "You are a financial research analyst. "
-                                "You have been given chart data and live web search results. "
                                 "Provide thorough, well-structured analysis. "
-                                "Structure: Summary → Chart Observations → Current Data → Analysis → Key Risks. "
+                                "Structure: Summary → Observations → Analysis → Key Risks. "
                                 "This is for research purposes only, not financial advice."
                             )
                         }
-                    ] + clean_history + [{"role": "user", "content": combined_input}],
+                    ] + clean_history + [{"role": "user", "content": combined}],
                     "stream": False
                 },
                 timeout=300
@@ -418,7 +433,7 @@ data:
   # ===========================================================================
   vision_pipeline.py: |
     import asyncio
-    from typing import List
+    from typing import List, Callable, Awaitable, Any
     from pydantic import BaseModel
     import requests
 
@@ -465,7 +480,14 @@ data:
                     sanitized.append(msg)
             return sanitized
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(
+            self,
+            user_message: str,
+            model_id: str,
+            messages: List[dict],
+            body: dict,
+            __event_emitter__: Callable[[Any], Awaitable[None]] = None,
+        ) -> str:
             async def emit(description, done=False):
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": description, "done": done}})
@@ -509,7 +531,6 @@ data:
             if "message" not in vision_data:
                 await emit("Error", done=True)
                 return f"Vision error: {vision_data.get('error', str(vision_data))}"
-            description = vision_data["message"]["content"]
 
             await emit("Reasoning...")
             reasoning_resp = await asyncio.to_thread(lambda: requests.post(
@@ -527,7 +548,7 @@ data:
                         },
                         {
                             "role": "user",
-                            "content": "Question: " + user_message + "\n\nImage description:\n" + description
+                            "content": "Question: " + user_message + "\n\nImage description:\n" + vision_data["message"]["content"]
                         }
                     ],
                     "stream": False
@@ -542,7 +563,7 @@ data:
             await emit("Done", done=True)
             return (
                 "### Visual Description  *(qwen2.5vl:3b)*\n\n"
-                + description
+                + vision_data["message"]["content"]
                 + "\n\n---\n\n"
                 + "### Analysis  *(deepseek-r1:14b)*\n\n"
                 + reasoning_data["message"]["content"]
