@@ -27,8 +27,8 @@ data:
         class Valves(BaseModel):
             chat_url: str = "http://summarizer:11436"
             chat_model: str = "qwen2.5:7b"
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_url: str = "http://llm:11434"
+            vision_model: str = "qwen2.5vl:7b"
 
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
@@ -97,7 +97,7 @@ data:
                     "messages": [system] + clean_history + [
                         {"role": "user", "content": user_message, "images": images}
                     ],
-                    "options": {"num_ctx": 8192},
+                    "options": {"num_ctx": 16384},
                 }
                 if not want_stream:
                     resp = requests.post(url, json={**payload, "stream": False}, timeout=300)
@@ -169,8 +169,8 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_url: str = "http://llm:11434"
+            vision_model: str = "qwen2.5vl:7b"
             planner_url: str = "http://summarizer:11436"
             planner_model: str = "deepseek-r1:7b"
             coder_url: str = "http://llm:11434"
@@ -233,7 +233,7 @@ data:
                         json={
                             "model": self.valves.vision_model,
                             "messages": [{"role": "user", "content": "Describe this image in full technical detail for a software developer. Task: " + user_message, "images": images}],
-                            "options": {"num_ctx": 8192}, "stream": False
+                            "options": {"num_ctx": 16384}, "stream": False
                         }, timeout=300
                     )
                     vision_data = vision_resp.json()
@@ -253,7 +253,7 @@ data:
                         json={
                             "model": self.valves.vision_model,
                             "messages": [{"role": "user", "content": "Describe this image in full technical detail for a software developer. Include all visible code, UI elements, error messages, diagrams, and text. Task: " + user_message, "images": images}],
-                            "options": {"num_ctx": 8192}, "stream": False
+                            "options": {"num_ctx": 16384}, "stream": False
                         }, timeout=300
                     )
                     vision_data = vision_resp.json()
@@ -368,8 +368,8 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_url: str = "http://llm:11434"
+            vision_model: str = "qwen2.5vl:7b"
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "deepseek-r1:14b"
             searxng_url: str = "http://searxng:8080/search"
@@ -469,7 +469,7 @@ data:
                                 "SEARCH_QUERY: <short web search query for this stock>\n\n"
                                 f"User question: {user_message}"
                             ), "images": images}],
-                            "options": {"num_ctx": 8192}, "stream": False
+                            "options": {"num_ctx": 16384}, "stream": False
                         }, timeout=300
                     )
                     vision_data = vision_resp.json()
@@ -519,7 +519,7 @@ data:
                                 "SEARCH_QUERY: <short web search query, e.g. 'AMZN stock news 2025'>\n\n"
                                 f"User question: {user_message}"
                             ), "images": images}],
-                            "options": {"num_ctx": 8192}, "stream": False
+                            "options": {"num_ctx": 16384}, "stream": False
                         }, timeout=300
                     )
                     vision_data = vision_resp.json()
@@ -582,8 +582,8 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://summarizer:11436"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_url: str = "http://llm:11434"
+            vision_model: str = "qwen2.5vl:7b"
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "deepseek-r1:14b"
 
@@ -684,7 +684,7 @@ data:
                     json={
                         "model": self.valves.vision_model,
                         "messages": [{"role": "user", "content": "Describe this image in thorough detail. Note all visible text, numbers, charts, patterns, and visual elements. The user will ask: " + user_message, "images": images}],
-                        "options": {"num_ctx": 8192}, "stream": False
+                        "options": {"num_ctx": 16384}, "stream": False
                     }, timeout=300
                 )
                 vision_data = vision_resp.json()
@@ -710,7 +710,7 @@ data:
                     json={
                         "model": self.valves.vision_model,
                         "messages": [{"role": "user", "content": "Describe this image in thorough detail. Note all visible text, numbers, charts, patterns, and visual elements. The user will ask: " + user_message, "images": images}],
-                        "options": {"num_ctx": 8192}, "stream": False
+                        "options": {"num_ctx": 16384}, "stream": False
                     }, timeout=300
                 )
                 vision_data = vision_resp.json()
