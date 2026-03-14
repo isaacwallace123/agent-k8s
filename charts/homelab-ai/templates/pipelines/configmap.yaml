@@ -323,7 +323,21 @@ data:
                     pass
 
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+            import logging
+            log = logging.getLogger("finance_pipeline")
+            last = messages[-1] if messages else {}
+            content = last.get("content", "")
+            log.warning(f"[FP] last_msg_role={last.get('role')} content_type={type(content).__name__}")
+            if isinstance(content, list):
+                for i, p in enumerate(content):
+                    url = p.get("image_url", {}).get("url", "")
+                    log.warning(f"[FP] content[{i}] type={p.get('type')} url_prefix={url[:60]}")
+            else:
+                log.warning(f"[FP] content_str={str(content)[:80]}")
+
             images = self._extract_images(messages)
+            log.warning(f"[FP] images_found={len(images)} first={str(images[0])[:60] if images else 'NONE'}")
+
             clean_history = self._sanitize_messages(messages[:-1])
 
             image_analysis = ""
