@@ -12,12 +12,13 @@ data:
 
   # ===========================================================================
   # Chat Pipeline — fast conversational chat with optional image support
-  # No image: qwen2.5:7b (single call)
-  # With image: qwen2.5vl:3b answers directly (single call)
+  # No image: qwen2.5:7b (single streaming call)
+  # With image: qwen2.5vl:3b answers directly (single streaming call)
   # ===========================================================================
   chat_pipeline.py: |
     import base64
-    from typing import List
+    import json
+    from typing import AsyncGenerator, List, Union
     from pydantic import BaseModel
     import requests
 
@@ -76,55 +77,59 @@ data:
             if emitter:
                 await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> AsyncGenerator[str, None]:
             images = self._resolve_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
             system = {"role": "system", "content": "You are a helpful, friendly assistant. Answer clearly and conversationally."}
 
             if images:
                 await self._emit(__event_emitter__, "Analyzing image...")
-                resp = requests.post(
-                    self.valves.vision_url + "/api/chat",
-                    json={
-                        "model": self.valves.vision_model,
-                        "messages": [system] + clean_history + [
-                            {"role": "user", "content": user_message, "images": images}
-                        ],
-                        "options": {"num_ctx": 8192},
-                        "stream": False
-                    },
-                    timeout=120
-                )
+                url = self.valves.vision_url + "/api/chat"
+                payload = {
+                    "model": self.valves.vision_model,
+                    "messages": [system] + clean_history + [
+                        {"role": "user", "content": user_message, "images": images}
+                    ],
+                    "options": {"num_ctx": 8192},
+                }
             else:
                 await self._emit(__event_emitter__, "Thinking...")
-                resp = requests.post(
-                    self.valves.chat_url + "/api/chat",
-                    json={
-                        "model": self.valves.chat_model,
-                        "messages": [system] + clean_history + [
-                            {"role": "user", "content": user_message}
-                        ],
-                        "options": {"num_ctx": 16384},
-                        "stream": False
-                    },
-                    timeout=300
-                )
+                url = self.valves.chat_url + "/api/chat"
+                payload = {
+                    "model": self.valves.chat_model,
+                    "messages": [system] + clean_history + [
+                        {"role": "user", "content": user_message}
+                    ],
+                    "options": {"num_ctx": 16384},
+                }
 
-            data = resp.json()
-            if "message" not in data:
+            try:
+                with requests.post(url, json={**payload, "stream": True}, stream=True, timeout=(10, None)) as resp:
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        chunk = data.get("message", {}).get("content", "")
+                        if chunk:
+                            yield chunk
+                        if data.get("done"):
+                            break
+            except Exception as e:
                 await self._emit(__event_emitter__, "Error", done=True)
-                return f"Error: {data.get('error', str(data))}"
-            await self._emit(__event_emitter__, "Done", done=True)
-            return data["message"]["content"]
+                yield f"Error: {e}"
 
   # ===========================================================================
   # Coding Pipeline
-  # No image:    deepseek-r1:7b plans → qwen2.5-coder:14b implements
-  # With image:  qwen2.5vl:3b describes → qwen2.5-coder:14b implements
+  # No image:    deepseek-r1:7b plans (blocking) → qwen2.5-coder:14b streams code
+  # With image:  qwen2.5vl:3b describes (blocking) → qwen2.5-coder:14b streams code
   # ===========================================================================
   coding_pipeline.py: |
     import base64
-    from typing import List
+    import json
+    from typing import AsyncGenerator, List, Union
     from pydantic import BaseModel
     import requests
 
@@ -169,7 +174,7 @@ data:
             if emitter:
                 await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> AsyncGenerator[str, None]:
             images = self._resolve_images(messages)
 
             if images:
@@ -195,72 +200,104 @@ data:
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
                     await self._emit(__event_emitter__, "Error", done=True)
-                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                    yield f"Vision error: {vision_data.get('error', str(vision_data))}"
+                    return
                 code_input = "Image context:\n" + vision_data["message"]["content"] + "\n\nTask: " + user_message
             else:
                 await self._emit(__event_emitter__, "Planning...")
-                plan_resp = requests.post(
-                    self.valves.planner_url + "/api/chat",
+                yield "### Plan  *(deepseek-r1:7b)*\n\n"
+                plan_chunks = []
+                try:
+                    with requests.post(
+                        self.valves.planner_url + "/api/chat",
+                        json={
+                            "model": self.valves.planner_model,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "You are a senior software architect. "
+                                        "Given a coding task, produce a concise numbered implementation plan. "
+                                        "Do not write code — only plan the approach and structure."
+                                    )
+                                },
+                                {"role": "user", "content": user_message}
+                            ],
+                            "options": {"num_ctx": 4096},
+                            "stream": True
+                        },
+                        stream=True,
+                        timeout=(10, None)
+                    ) as resp:
+                        for line in resp.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except Exception:
+                                continue
+                            chunk = data.get("message", {}).get("content", "")
+                            if chunk:
+                                plan_chunks.append(chunk)
+                                yield chunk
+                            if data.get("done"):
+                                break
+                except Exception as e:
+                    await self._emit(__event_emitter__, "Error", done=True)
+                    yield f"Planner error: {e}"
+                    return
+
+                code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + "".join(plan_chunks)
+                yield "\n\n---\n\n### Code  *(qwen2.5-coder:14b)*\n\n"
+
+            await self._emit(__event_emitter__, "Coding...")
+            try:
+                with requests.post(
+                    self.valves.coder_url + "/api/chat",
                     json={
-                        "model": self.valves.planner_model,
+                        "model": self.valves.coder_model,
                         "messages": [
                             {
                                 "role": "system",
                                 "content": (
-                                    "You are a senior software architect. "
-                                    "Given a coding task, produce a concise numbered implementation plan. "
-                                    "Do not write code — only plan the approach and structure."
+                                    "You are an expert programmer. "
+                                    "Implement the solution according to the provided context. "
+                                    "Write complete, working code with clear comments."
                                 )
                             },
-                            {"role": "user", "content": user_message}
+                            {"role": "user", "content": code_input}
                         ],
-                        "options": {"num_ctx": 4096},
-                        "stream": False
+                        "options": {"num_ctx": 16384},
+                        "stream": True
                     },
-                    timeout=120
-                )
-                plan_data = plan_resp.json()
-                if "message" not in plan_data:
-                    await self._emit(__event_emitter__, "Error", done=True)
-                    return f"Planner error: {plan_data.get('error', str(plan_data))}"
-                code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan_data["message"]["content"]
-
-            await self._emit(__event_emitter__, "Coding...")
-            code_resp = requests.post(
-                self.valves.coder_url + "/api/chat",
-                json={
-                    "model": self.valves.coder_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an expert programmer. "
-                                "Implement the solution according to the provided context. "
-                                "Write complete, working code with clear comments."
-                            )
-                        },
-                        {"role": "user", "content": code_input}
-                    ],
-                    "options": {"num_ctx": 16384},
-                    "stream": False
-                },
-                timeout=300
-            )
-            code_data = code_resp.json()
-            if "message" not in code_data:
+                    stream=True,
+                    timeout=(10, None)
+                ) as resp:
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        chunk = data.get("message", {}).get("content", "")
+                        if chunk:
+                            yield chunk
+                        if data.get("done"):
+                            break
+            except Exception as e:
                 await self._emit(__event_emitter__, "Error", done=True)
-                return f"Coder error: {code_data.get('error', str(code_data))}"
-            await self._emit(__event_emitter__, "Done", done=True)
-            return code_data["message"]["content"]
+                yield f"Error: {e}"
 
   # ===========================================================================
   # Finance Pipeline
-  # With image: single vision call (analyze + search query) → web search → reasoning
-  # No image:   use user message as search query → web search → reasoning
+  # With image: qwen2.5vl:3b analyzes chart (blocking) → web search → deepseek-r1:14b streams
+  # No image:   web search → deepseek-r1:14b streams
   # ===========================================================================
   finance_pipeline.py: |
     import base64
-    from typing import List
+    import json
+    from typing import AsyncGenerator, List, Union
     from pydantic import BaseModel
     import requests
 
@@ -341,7 +378,7 @@ data:
             if emitter:
                 await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> AsyncGenerator[str, None]:
             images = self._resolve_images(messages)
             clean_history = self._sanitize_messages(messages[:-1])
 
@@ -372,7 +409,8 @@ data:
                 vision_data = vision_resp.json()
                 if "message" not in vision_data:
                     await self._emit(__event_emitter__, "Error", done=True)
-                    return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                    yield f"Vision error: {vision_data.get('error', str(vision_data))}"
+                    return
 
                 raw = vision_data["message"]["content"]
                 if "SEARCH_QUERY:" in raw:
@@ -392,40 +430,52 @@ data:
             else:
                 combined = f"Live web data:\n{web_results}\n\nUser question: {user_message}"
 
-            analysis_resp = requests.post(
-                self.valves.reasoning_url + "/api/chat",
-                json={
-                    "model": self.valves.reasoning_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a financial research analyst. "
-                                "Provide thorough, well-structured analysis. "
-                                "Structure: Summary → Observations → Analysis → Key Risks. "
-                                "This is for research purposes only, not financial advice."
-                            )
-                        }
-                    ] + clean_history + [{"role": "user", "content": combined}],
-                    "options": {"num_ctx": 16384},
-                    "stream": False
-                },
-                timeout=300
-            )
-            analysis_data = analysis_resp.json()
-            if "message" not in analysis_data:
+            try:
+                with requests.post(
+                    self.valves.reasoning_url + "/api/chat",
+                    json={
+                        "model": self.valves.reasoning_model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are a financial research analyst. "
+                                    "Provide thorough, well-structured analysis. "
+                                    "Structure: Summary → Observations → Analysis → Key Risks. "
+                                    "This is for research purposes only, not financial advice."
+                                )
+                            }
+                        ] + clean_history + [{"role": "user", "content": combined}],
+                        "options": {"num_ctx": 16384},
+                        "stream": True
+                    },
+                    stream=True,
+                    timeout=(10, None)
+                ) as resp:
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        chunk = data.get("message", {}).get("content", "")
+                        if chunk:
+                            yield chunk
+                        if data.get("done"):
+                            break
+            except Exception as e:
                 await self._emit(__event_emitter__, "Error", done=True)
-                return f"Analysis error: {analysis_data.get('error', str(analysis_data))}"
-            await self._emit(__event_emitter__, "Done", done=True)
-            return analysis_data["message"]["content"]
+                yield f"Error: {e}"
 
   # ===========================================================================
   # Vision Pipeline — deep image analysis with reasoning
-  # qwen2.5vl:3b describes → deepseek-r1:14b reasons
+  # qwen2.5vl:3b describes (blocking) → deepseek-r1:14b streams reasoning
   # ===========================================================================
   vision_pipeline.py: |
     import base64
-    from typing import List
+    import json
+    from typing import AsyncGenerator, List, Union
     from pydantic import BaseModel
     import requests
 
@@ -484,23 +534,35 @@ data:
             if emitter:
                 await emitter({"type": "status", "data": {"description": description, "done": done}})
 
-        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> str:
+        async def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> AsyncGenerator[str, None]:
             images = self._resolve_images(messages)
 
             if not images:
                 await self._emit(__event_emitter__, "Thinking...")
                 clean = self._sanitize_messages(messages)
-                resp = requests.post(
-                    self.valves.reasoning_url + "/api/chat",
-                    json={"model": self.valves.reasoning_model, "messages": clean, "options": {"num_ctx": 16384}, "stream": False},
-                    timeout=300
-                )
-                data = resp.json()
-                if "message" not in data:
+                try:
+                    with requests.post(
+                        self.valves.reasoning_url + "/api/chat",
+                        json={"model": self.valves.reasoning_model, "messages": clean, "options": {"num_ctx": 16384}, "stream": True},
+                        stream=True,
+                        timeout=(10, None)
+                    ) as resp:
+                        for line in resp.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except Exception:
+                                continue
+                            chunk = data.get("message", {}).get("content", "")
+                            if chunk:
+                                yield chunk
+                            if data.get("done"):
+                                break
+                except Exception as e:
                     await self._emit(__event_emitter__, "Error", done=True)
-                    return f"Error: {data.get('error', str(data))}"
-                await self._emit(__event_emitter__, "Done", done=True)
-                return data["message"]["content"]
+                    yield f"Error: {e}"
+                return
 
             await self._emit(__event_emitter__, "Analyzing image...")
             vision_resp = requests.post(
@@ -524,43 +586,52 @@ data:
             vision_data = vision_resp.json()
             if "message" not in vision_data:
                 await self._emit(__event_emitter__, "Error", done=True)
-                return f"Vision error: {vision_data.get('error', str(vision_data))}"
+                yield f"Vision error: {vision_data.get('error', str(vision_data))}"
+                return
 
             await self._emit(__event_emitter__, "Reasoning...")
-            reasoning_resp = requests.post(
-                self.valves.reasoning_url + "/api/chat",
-                json={
-                    "model": self.valves.reasoning_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an analytical assistant. "
-                                "An image has been described to you in detail. "
-                                "Reason carefully through the content and answer the user's question thoroughly."
-                            )
-                        },
-                        {
-                            "role": "user",
-                            "content": "Question: " + user_message + "\n\nImage description:\n" + vision_data["message"]["content"]
-                        }
-                    ],
-                    "options": {"num_ctx": 16384},
-                    "stream": False
-                },
-                timeout=300
-            )
-            reasoning_data = reasoning_resp.json()
-            if "message" not in reasoning_data:
-                await self._emit(__event_emitter__, "Error", done=True)
-                return f"Reasoning error: {reasoning_data.get('error', str(reasoning_data))}"
+            yield "### Visual Description  *(qwen2.5vl:3b)*\n\n"
+            yield vision_data["message"]["content"]
+            yield "\n\n---\n\n### Analysis  *(deepseek-r1:14b)*\n\n"
 
-            await self._emit(__event_emitter__, "Done", done=True)
-            return (
-                "### Visual Description  *(qwen2.5vl:3b)*\n\n"
-                + vision_data["message"]["content"]
-                + "\n\n---\n\n"
-                + "### Analysis  *(deepseek-r1:14b)*\n\n"
-                + reasoning_data["message"]["content"]
-            )
+            try:
+                with requests.post(
+                    self.valves.reasoning_url + "/api/chat",
+                    json={
+                        "model": self.valves.reasoning_model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are an analytical assistant. "
+                                    "An image has been described to you in detail. "
+                                    "Reason carefully through the content and answer the user's question thoroughly."
+                                )
+                            },
+                            {
+                                "role": "user",
+                                "content": "Question: " + user_message + "\n\nImage description:\n" + vision_data["message"]["content"]
+                            }
+                        ],
+                        "options": {"num_ctx": 16384},
+                        "stream": True
+                    },
+                    stream=True,
+                    timeout=(10, None)
+                ) as resp:
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        chunk = data.get("message", {}).get("content", "")
+                        if chunk:
+                            yield chunk
+                        if data.get("done"):
+                            break
+            except Exception as e:
+                await self._emit(__event_emitter__, "Error", done=True)
+                yield f"Error: {e}"
 {{- end }}
