@@ -236,16 +236,12 @@ summarizer:
     # Store SYCL kernel cache on the model PVC so it survives pod restarts
     - name: SYCL_CACHE_DIR
       value: "/root/.ollama/.sycl-cache"
-    # ipex-llm image defaults these to 1 (disabled) for A380 — override to enable
-    # DISABLE_GRAPH=0: enables SYCL graph execution (batched kernels, much faster)
-    # DISABLE_OPT=0: enables fused ops and memory layout optimizations
-    # SYCL_F16=1: use fp16 instead of fp32 for SYCL ops (2x memory bandwidth)
+    # A380 has a driver bug with SYCL command graph execution — must stay disabled
+    # DISABLE_OPT=0: safe to enable (fused ops, memory layout optimizations)
     - name: GGML_SYCL_DISABLE_GRAPH
-      value: "0"
+      value: "1"
     - name: GGML_SYCL_DISABLE_OPT
       value: "0"
-    - name: GGML_SYCL_F16
-      value: "1"
     # 7b/3b models have tiny KV caches — q8_0 barely needed but consistent
     - name: OLLAMA_KV_CACHE_TYPE
       value: "q8_0"
