@@ -37,6 +37,34 @@ def _prom(q: str) -> list:
         return []
 
 
+def discover_apps() -> list[tuple[str, str]]:
+    """Return all unique (namespace, app) pairs from running pods, skipping system namespaces."""
+    SKIP = {"kube-system", "kube-public", "kube-node-lease"}
+    try:
+        config.load_incluster_config()
+        v1 = client.CoreV1Api()
+        pods = v1.list_pod_for_all_namespaces().items
+        seen: set[tuple[str, str]] = set()
+        result = []
+        for pod in pods:
+            ns = pod.metadata.namespace
+            if ns in SKIP:
+                continue
+            labels = pod.metadata.labels or {}
+            app = labels.get("app") or labels.get("app.kubernetes.io/name", "")
+            if not app:
+                parts = pod.metadata.name.rsplit("-", 2)
+                app = parts[0] if len(parts) >= 2 else pod.metadata.name
+            key = (ns, app)
+            if key not in seen:
+                seen.add(key)
+                result.append(key)
+        return result
+    except Exception as e:
+        log.error("discover_apps failed: %s", e)
+        return []
+
+
 def collect_pod_data(namespace: str, app: str) -> str:
     lines: list[str] = []
 
