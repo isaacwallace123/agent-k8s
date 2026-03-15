@@ -1,0 +1,19 @@
+{{- if .Values.overwatch.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: overwatch
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: overwatch
+spec:
+  selector:
+    {{- include "homelab-ai.selectorLabels" (dict "component" "overwatch" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.overwatch.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

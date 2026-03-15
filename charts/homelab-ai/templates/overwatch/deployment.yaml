@@ -1,0 +1,72 @@
+{{- if .Values.overwatch.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overwatch
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: overwatch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "overwatch" "context" .) | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "overwatch" "context" .) | nindent 8 }}
+    spec:
+      serviceAccountName: overwatch
+      {{- with .Values.overwatch.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.overwatch.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: overwatch
+          image: "{{ .Values.overwatch.image.repository }}:{{ .Values.overwatch.image.tag }}"
+          imagePullPolicy: {{ .Values.overwatch.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.overwatch.port }}
+              protocol: TCP
+
+          env:
+            - name: INTERVAL_SECONDS
+              value: {{ .Values.overwatch.intervalSeconds | quote }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.overwatch.prometheusUrl | quote }}
+            - name: OLLAMA_URL
+              value: {{ .Values.overwatch.ollamaUrl | quote }}
+            - name: OLLAMA_MODEL
+              value: {{ .Values.overwatch.model | quote }}
+            {{- if .Values.overwatch.databaseUrl }}
+            - name: DATABASE_URL
+              value: {{ .Values.overwatch.databaseUrl | quote }}
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.overwatch.resources | nindent 12 }}
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+{{- end }}
