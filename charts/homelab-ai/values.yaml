@@ -42,9 +42,9 @@ llm:
   # Port the Ollama API listens on
   port: 11434
 
-  # Default model for Overwatch analysis — qwen2.5:7b is fast and sufficient for cluster monitoring.
-  # Pull: kubectl exec -n homelab-ai deploy/llm -- ollama pull qwen2.5:7b
-  defaultModel: "qwen2.5:7b"
+  # Default model for Overwatch analysis.
+  # Pull: kubectl exec -n homelab-ai deploy/llm -- ollama pull qwen2.5:14b
+  defaultModel: "qwen2.5:14b"
 
   # Resource requests/limits
   resources:
@@ -594,7 +594,7 @@ overwatch:
 
   # Ollama LLM endpoint and model for analysis
   ollamaUrl: "http://llm:11434"
-  model: "qwen2.5:7b"
+  model: "qwen2.5:14b"
 
   # Postgres connection string for storing insight history.
   # Override in values-secret.yaml (not committed to git):
