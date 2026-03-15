@@ -42,7 +42,7 @@ def collect_pod_data(namespace: str, app: str) -> str:
 
     try:
         config.load_incluster_config()
-        v1 = client.CoreV1()
+        v1 = client.CoreV1Api()
 
         all_pods = v1.list_namespaced_pod(namespace).items
         app_pods = [
