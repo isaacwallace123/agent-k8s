@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from models import Insight, PodInsight
 from collector import collect_cluster_snapshot
 from analyzer import analyze
-from pod_analyzer import analyze_pod
+from pod_analyzer import analyze_pod, discover_apps
 from database import init_db, save_insight, load_latest, load_history
 
 logging.basicConfig(
@@ -19,7 +19,8 @@ logging.basicConfig(
 log = logging.getLogger("overwatch")
 
 INTERVAL = int(os.getenv("INTERVAL_SECONDS", "300"))
-POD_CACHE_TTL = 300  # seconds
+POD_SCAN_INTERVAL = int(os.getenv("POD_SCAN_INTERVAL_SECONDS", "600"))
+POD_CACHE_TTL = 600  # seconds
 
 # In-memory pod insight cache: "namespace/app" -> (PodInsight, timestamp)
 _pod_cache: dict[str, tuple[PodInsight, float]] = {}
@@ -54,6 +55,31 @@ async def _scheduler():
         await asyncio.sleep(INTERVAL)
 
 
+async def run_pod_scan():
+    apps = await asyncio.get_event_loop().run_in_executor(None, discover_apps)
+    log.info("Pod scan: discovered %d apps", len(apps))
+    for ns, app in apps:
+        cache_key = f"{ns}/{app}"
+        cached = _pod_cache.get(cache_key)
+        if cached:
+            _, ts = cached
+            if time.time() - ts < POD_CACHE_TTL:
+                continue
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(None, analyze_pod, ns, app)
+            _pod_cache[cache_key] = (result, time.time())
+            log.info("Pod scan: %s/%s -> %s", ns, app, result.status)
+        except Exception as e:
+            log.error("Pod scan failed for %s/%s: %s", ns, app, e)
+
+
+async def _pod_scheduler():
+    await asyncio.sleep(60)  # let the cluster settle on startup
+    while True:
+        await run_pod_scan()
+        await asyncio.sleep(POD_SCAN_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _latest
@@ -66,12 +92,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     task = asyncio.create_task(_scheduler())
+    pod_task = asyncio.create_task(_pod_scheduler())
     yield
     task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    pod_task.cancel()
+    for t in (task, pod_task):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Project Overwatch", version="1.0.0", lifespan=lifespan)
@@ -105,6 +134,11 @@ def insights():
 @app.get("/history")
 def history(limit: int = 48):
     return load_history(min(limit, 200))
+
+
+@app.get("/pod-insights/all")
+def all_pod_insights():
+    return [insight.model_dump() for insight, _ in _pod_cache.values()]
 
 
 @app.get("/pod-insights")
