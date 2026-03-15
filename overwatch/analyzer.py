@@ -64,7 +64,11 @@ def analyze(snapshot: str) -> Insight:
             raise ValueError(f"No JSON object found in LLM response: {raw[:200]}")
 
         data = json.loads(raw[start:end])
-        anomalies = [Anomaly(**a) for a in data.get("anomalies", [])]
+        raw_anomalies = data.get("anomalies", [])
+        for a in raw_anomalies:
+            if isinstance(a.get("affected"), list):
+                a["affected"] = ", ".join(str(x) for x in a["affected"])
+        anomalies = [Anomaly(**a) for a in raw_anomalies]
 
         return Insight(
             collected_at=datetime.now(timezone.utc),
