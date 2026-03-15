@@ -24,7 +24,7 @@ Respond with exactly this structure:
       "severity": "low" or "medium" or "high",
       "type": "crashloop" or "high_cpu" or "high_memory" or "pending_pod" or "node_pressure" or "other",
       "description": "specific, actionable description",
-      "affected": "namespace/pod-name or node-name"
+      "affected": "single namespace/pod-name or node-name as a plain string, never an array"
     }}
   ],
   "recommendations": ["concrete recommendation 1", "concrete recommendation 2"]
