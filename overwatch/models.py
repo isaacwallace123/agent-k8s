@@ -25,3 +25,13 @@ class Insight(BaseModel):
     summary: str
     anomalies: List[Anomaly]
     recommendations: List[str]
+
+
+class PodInsight(BaseModel):
+    namespace: str
+    app: str
+    analyzed_at: datetime
+    status: str  # healthy, warning, critical, unknown
+    diagnosis: str
+    root_cause: str
+    suggestions: List[str]

@@ -1,13 +1,15 @@
 import os
+import time
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from models import Insight
+from models import Insight, PodInsight
 from collector import collect_cluster_snapshot
 from analyzer import analyze
+from pod_analyzer import analyze_pod
 from database import init_db, save_insight, load_latest, load_history
 
 logging.basicConfig(
@@ -17,6 +19,10 @@ logging.basicConfig(
 log = logging.getLogger("overwatch")
 
 INTERVAL = int(os.getenv("INTERVAL_SECONDS", "300"))
+POD_CACHE_TTL = 300  # seconds
+
+# In-memory pod insight cache: "namespace/app" -> (PodInsight, timestamp)
+_pod_cache: dict[str, tuple[PodInsight, float]] = {}
 
 # In-memory cache — always holds the most recent insight
 _latest: Insight | None = None
@@ -99,3 +105,18 @@ def insights():
 @app.get("/history")
 def history(limit: int = 48):
     return load_history(min(limit, 200))
+
+
+@app.get("/pod-insights")
+async def pod_insights(namespace: str, app: str):
+    if not namespace or not app:
+        raise HTTPException(status_code=400, detail="namespace and app are required")
+    cache_key = f"{namespace}/{app}"
+    cached = _pod_cache.get(cache_key)
+    if cached:
+        insight, ts = cached
+        if time.time() - ts < POD_CACHE_TTL:
+            return insight
+    result = await asyncio.get_event_loop().run_in_executor(None, analyze_pod, namespace, app)
+    _pod_cache[cache_key] = (result, time.time())
+    return result
