@@ -42,10 +42,9 @@ llm:
   # Port the Ollama API listens on
   port: 11434
 
-  # Default model — qwen2.5-coder:14b fits fully in Arc B580 12GB VRAM (~8.5GB Q4_K_M).
-  # 32B requires ~19GB and will partially offload to CPU RAM (slow).
-  # Pull models manually: kubectl exec -n homelab-ai deploy/llm -- ollama pull qwen2.5-coder:14b
-  defaultModel: "qwen2.5-coder:14b"
+  # Default model for Overwatch analysis — qwen2.5:7b is fast and sufficient for cluster monitoring.
+  # Pull: kubectl exec -n homelab-ai deploy/llm -- ollama pull qwen2.5:7b
+  defaultModel: "qwen2.5:7b"
 
   # Resource requests/limits
   resources:
@@ -129,7 +128,7 @@ llm:
 # Keeps inference traffic off pve1 for background indexing tasks.
 # =============================================================================
 embeddings:
-  enabled: true
+  enabled: false
 
   image:
     repository: intelanalytics/ipex-llm-inference-cpp-xpu
@@ -203,7 +202,7 @@ embeddings:
 # Separate Ollama instance with a smaller, fast model.
 # =============================================================================
 summarizer:
-  enabled: true
+  enabled: false
 
   image:
     repository: intelanalytics/ipex-llm-inference-cpp-xpu
@@ -286,7 +285,7 @@ summarizer:
 # Runs on pve1 NVMe for fast ANN search
 # =============================================================================
 vectordb:
-  enabled: true
+  enabled: false
 
   image:
     repository: qdrant/qdrant
@@ -449,7 +448,7 @@ redis:
 # Connects to the LLM service internally at http://llm:11434
 # =============================================================================
 openwebui:
-  enabled: true
+  enabled: false
 
   image:
     repository: ghcr.io/open-webui/open-webui
@@ -509,7 +508,7 @@ openwebui:
 #   Vision Pipeline  — qwen2.5vl:7b describes image → deepseek-r1:14b reasons
 # =============================================================================
 pipelines:
-  enabled: true
+  enabled: false
 
   image:
     repository: ghcr.io/open-webui/pipelines
@@ -546,7 +545,7 @@ pipelines:
 # JSON format is enabled so OpenWebUI can query it programmatically.
 # =============================================================================
 searxng:
-  enabled: true
+  enabled: false
 
   image:
     repository: searxng/searxng
@@ -570,4 +569,46 @@ searxng:
   # Pin to pve2 apps node (k3s-worker-node-2)
   nodeSelector: {}
 
+  tolerations: []
+
+# =============================================================================
+# Overwatch — AI cluster monitoring service
+# Continuously collects pod/node/metric data, runs LLM analysis every N minutes,
+# stores insights in Postgres, and exposes a REST API for the portfolio to consume.
+# =============================================================================
+overwatch:
+  enabled: true
+
+  image:
+    repository: ghcr.io/isaacwallace123/overwatch
+    tag: latest
+    pullPolicy: Always
+
+  port: 8000
+
+  # How often to run an analysis cycle (seconds)
+  intervalSeconds: 300
+
+  # Prometheus endpoint for metric queries
+  prometheusUrl: "http://prometheus.monitoring:9090"
+
+  # Ollama LLM endpoint and model for analysis
+  ollamaUrl: "http://llm:11434"
+  model: "qwen2.5:7b"
+
+  # Postgres connection string for storing insight history.
+  # Override in values-secret.yaml (not committed to git):
+  #   overwatch:
+  #     databaseUrl: "postgresql://aiuser:password@postgres:5432/homelab_ai"
+  databaseUrl: ""
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  nodeSelector: {}
   tolerations: []
