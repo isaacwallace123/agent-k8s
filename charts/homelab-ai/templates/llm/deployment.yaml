@@ -56,6 +56,10 @@ spec:
               until $OLLAMA list > /dev/null 2>&1; do sleep 2; done
               echo "Pulling {{ .Values.llm.defaultModel }}..."
               $OLLAMA pull {{ .Values.llm.defaultModel }}
+              echo "Warming up {{ .Values.llm.defaultModel }} into VRAM..."
+              echo "hello" | $OLLAMA run {{ .Values.llm.defaultModel }} 2>/dev/null || true
+              touch /tmp/model-ready
+              echo "Model ready."
               wait
 
           # privileged gives level_zero access to /sys/class/drm for GPU enumeration
@@ -88,11 +92,11 @@ spec:
             initialDelaySeconds: {{ .Values.llm.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.llm.probes.liveness.periodSeconds }}
           readinessProbe:
-            httpGet:
-              path: {{ .Values.llm.probes.readiness.path }}
-              port: http
-            initialDelaySeconds: {{ .Values.llm.probes.readiness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.llm.probes.readiness.periodSeconds }}
+            exec:
+              command: ["test", "-f", "/tmp/model-ready"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 120
 
       volumes:
         - name: model-storage
