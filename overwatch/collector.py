@@ -30,7 +30,7 @@ def collect_cluster_snapshot() -> str:
     # --- Kubernetes data ---
     try:
         config.load_incluster_config()
-        v1 = client.CoreV1()
+        v1 = client.CoreV1Api()
 
         # Nodes
         nodes = v1.list_node()
