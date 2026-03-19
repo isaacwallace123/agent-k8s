@@ -1,0 +1,20 @@
+{{- if .Values.coding.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coding
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coding
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "homelab-ai.selectorLabels" (dict "component" "coding" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.coding.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

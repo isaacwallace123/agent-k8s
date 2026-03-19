@@ -1,0 +1,21 @@
+{{- if and .Values.coding.enabled .Values.coding.storage.enabled }}
+---
+# PVC for Coding model files
+# Bound to pve1 by nodeSelector on the deployment.
+# Use a large size — 32B+ models can exceed 20GB each.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: coding-models
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coding
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ include "homelab-ai.storageClass" (dict "component" .Values.coding "context" .) }}
+  resources:
+    requests:
+      storage: {{ .Values.coding.storage.size }}
+{{- end }}

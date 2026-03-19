@@ -1,0 +1,103 @@
+{{- if .Values.coding.enabled }}
+---
+# =============================================================================
+# Coding — Primary coding / planning model (Ollama)
+# Intel Arc B50 Pro 16GB — second GPU on pve1, level_zero index 1
+# (verify enumeration order on node)
+# Model files stored on pve1 SATA SSD via PVC.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coding
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coding
+spec:
+  # Single replica — one Ollama process manages the GPU context
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "homelab-ai.selectorLabels" (dict "component" "coding" "context" .) | nindent 6 }}
+  strategy:
+    # Recreate so the GPU is fully released before the new pod starts
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "coding" "context" .) | nindent 8 }}
+    spec:
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorPve1" . | nindent 8 }}
+      {{- with .Values.coding.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # render (993) + video (44) groups confirmed on k3s nodes.
+      securityContext:
+        supplementalGroups: {{ .Values.global.gpuGroups | toJson }}
+        runAsUser: 0
+        runAsGroup: 0
+
+      containers:
+        - name: ollama
+          image: "{{ .Values.coding.image.repository }}:{{ .Values.coding.image.tag }}"
+          imagePullPolicy: {{ .Values.coding.image.pullPolicy }}
+          # ipex-llm-inference-cpp-xpu default CMD is /bin/bash (exits immediately).
+          # Must source oneAPI env then run ollama serve explicitly.
+          command: ["/bin/bash", "-c"]
+          args: ["source /opt/intel/oneapi/setvars.sh --force && /usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs/ollama/ollama serve"]
+
+          # privileged gives level_zero access to /sys/class/drm for GPU enumeration
+          securityContext:
+            privileged: true
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.coding.port }}
+              protocol: TCP
+
+          env:
+            {{- include "homelab-ai.envList" .Values.coding.env | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.coding.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: model-storage
+              mountPath: {{ .Values.coding.storage.mountPath }}
+            - name: dri
+              mountPath: /dev/dri
+            - name: sysdrm
+              mountPath: /sys/class/drm
+
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.coding.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.coding.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.coding.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.coding.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.coding.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.coding.probes.readiness.periodSeconds }}
+
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: coding-models
+        # Expose Intel Arc B50 Pro GPU to the container for hardware-accelerated inference
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        # level_zero enumerates GPUs via /sys/class/drm — required for SYCL device discovery
+        - name: sysdrm
+          hostPath:
+            path: /sys/class/drm
+            type: Directory
+{{- end }}
