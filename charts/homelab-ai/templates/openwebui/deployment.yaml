@@ -2,7 +2,7 @@
 ---
 # =============================================================================
 # Open WebUI — Chat interface for Ollama
-# Scheduled on pve2 apps node (k3s-worker-node-2)
+# Scheduled on pve2 AI node (k3s-worker-node-3)
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -25,7 +25,7 @@ spec:
         {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui" "context" .) | nindent 8 }}
     spec:
       nodeSelector:
-        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+        {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
       {{- with .Values.openwebui.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
