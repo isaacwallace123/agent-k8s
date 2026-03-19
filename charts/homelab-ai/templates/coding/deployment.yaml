@@ -1,9 +1,12 @@
 {{- if .Values.coding.enabled }}
 ---
 # =============================================================================
-# Coding — Primary coding / planning model (Ollama)
-# Intel Arc B50 Pro 16GB — second GPU on pve1, level_zero index 1
-# (verify enumeration order on node)
+# Coding — Stage 1: Vision / analysis / planning (Ollama)
+# Intel Arc B50 Pro 16GB — second GPU on pve1, Vulkan device 1.
+# llava:7b — uses CLIP ViT-L/14 vision encoder (~300MB buffer), fits in 16GB.
+# NOTE: qwen2.5vl (all sizes) is incompatible with Intel Arc Mesa Vulkan —
+#   its vision encoder needs a 14.5GB single contiguous buffer, exceeding the
+#   ~4GB maxStorageBufferRange limit.  Use llava-family models instead.
 # Model files stored on pve1 SATA SSD via PVC.
 # =============================================================================
 apiVersion: apps/v1
