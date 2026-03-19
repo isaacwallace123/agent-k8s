@@ -132,8 +132,8 @@ coding:
 
   image:
     repository: intelanalytics/ipex-llm-inference-cpp-xpu
-    # Pinned to 2.2.0 — 2.3.0 nightlies have a broken XMX SDP kernel on B50 Pro (Battlemage/xe2)
-    tag: "2.2.0"
+    # Pinned — 2.3.0-SNAPSHOT/latest has broken XMX SDP kernel on B50 Pro (Battlemage/xe2)
+    tag: "2.2.0-SNAPSHOT"
     pullPolicy: IfNotPresent
 
   port: 11437
