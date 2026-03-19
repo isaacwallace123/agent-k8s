@@ -94,10 +94,16 @@ spec:
                   try:
                       with urllib.request.urlopen(req, timeout=15) as r:
                           body = r.read()
-                          return json.loads(body) if body else {}, r.status
+                          try:
+                              return json.loads(body), r.status
+                          except Exception:
+                              return {}, r.status
                   except urllib.error.HTTPError as e:
                       body = e.read().decode()
-                      return json.loads(body) if body else {}, e.code
+                      try:
+                          return json.loads(body), e.code
+                      except Exception:
+                          return {}, e.code
 
               # Wait for Open WebUI to be healthy
               print("Waiting for Open WebUI...")
