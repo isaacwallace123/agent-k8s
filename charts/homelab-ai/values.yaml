@@ -159,8 +159,10 @@ coding:
       value: "0.0.0.0:11437"
     - name: ONEAPI_DEVICE_SELECTOR
       value: "level_zero:1"   # B50 Pro is second GPU on pve1 — verify with: clinfo or xpu-smi
+    # XMX SDP kernel (sdp_xmx_kernel.cpp) crashes on B50 Pro (Battlemage/xe2) in current IPEX-LLM image.
+    # Force CPU inference until a fixed image is available.
     - name: OLLAMA_NUM_GPU
-      value: "999"
+      value: "0"
     - name: ZES_ENABLE_SYSMAN
       value: "1"
     - name: no_proxy
@@ -170,14 +172,6 @@ coding:
     - name: OLLAMA_NUM_PARALLEL
       value: "1"
     - name: OLLAMA_MAX_LOADED_MODELS
-      value: "1"
-    # Flash attention not supported on B50 Pro (Battlemage) — causes XMX SDP kernel crash
-    # - name: OLLAMA_FLASH_ATTENTION
-    #   value: "1"
-    # Disable Intel XMX SDP attention kernel — crashes on B50 Pro in current IPEX-LLM image
-    - name: GGML_SYCL_DISABLE_GRAPH
-      value: "1"
-    - name: GGML_SYCL_DISABLE_OPT
       value: "1"
     - name: SYCL_CACHE_PERSISTENT
       value: "1"
