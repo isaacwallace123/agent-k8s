@@ -50,8 +50,11 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              source /opt/intel/oneapi/setvars.sh --force
-              OLLAMA=$(find /usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs -name "ollama" ! -name "ollama-lib" -type f 2>/dev/null | head -1)
+              source /opt/intel/oneapi/setvars.sh --force 2>/dev/null || true
+              OLLAMA=$(command -v ollama 2>/dev/null)
+              if [ -z "$OLLAMA" ]; then
+                OLLAMA=$(find /usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs -name "ollama" ! -name "ollama-lib" -type f 2>/dev/null | head -1)
+              fi
               [ -z "$OLLAMA" ] && OLLAMA=/usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs/ollama/ollama
               $OLLAMA serve &
               until $OLLAMA list > /dev/null 2>&1; do sleep 2; done
