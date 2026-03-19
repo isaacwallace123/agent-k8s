@@ -174,15 +174,15 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://llm:11434"
-            vision_model: str = "qwen2.5vl:7b"
-            planner_url: str = "http://summarizer:11436"
-            planner_model: str = "deepseek-r1:7b"
-            coder_url: str = "http://llm:11434"
-            coder_model: str = "qwen2.5-coder:14b"
+            # Stage 1: B50 Pro — vision + analysis + planning (qwen2.5vl:7b)
+            analysis_url: str = "http://coding:11437"
+            analysis_model: str = "qwen2.5vl:7b"
+            # Stage 2: B580 — deep reasoning + implementation (qwen3:14b, thinking mode)
+            reasoning_url: str = "http://llm:11434"
+            reasoning_model: str = "qwen3:14b"
 
         def __init__(self):
-            self.name = "Coding Pipeline (Vision → Plan → Code)"
+            self.name = "Coding Pipeline (Analyze → Plan → Implement)"
             self.valves = self.Valves()
             try:
                 self._loop = asyncio.get_event_loop()
@@ -233,132 +233,79 @@ data:
             data = resp.json()
             return data.get("message", {}).get("content", f"Error: {data.get('error', str(data))}")
 
+        def _call_stage1(self, user_message: str, images: list, system: str) -> str:
+            msgs = [{"role": "user", "content": user_message}]
+            if images:
+                msgs[0]["images"] = images
+            resp = requests.post(
+                self.valves.analysis_url + "/api/chat",
+                json={"model": self.valves.analysis_model, "messages": [{"role": "system", "content": system}] + msgs,
+                      "options": {"num_ctx": 16384}, "stream": False},
+                timeout=300
+            )
+            data = resp.json()
+            return data.get("message", {}).get("content", f"Stage 1 error: {data.get('error', str(data))}")
+
         def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict, __event_emitter__=None) -> Union[str, Generator]:
             want_stream = body.get("stream", False)
             images = self._resolve_images(messages)
 
-            if images:
-                if not want_stream:
-                    vision_resp = requests.post(
-                        self.valves.vision_url + "/api/chat",
-                        json={
-                            "model": self.valves.vision_model,
-                            "messages": [{"role": "user", "content": "Describe this image in full technical detail for a software developer. Task: " + user_message, "images": images}],
-                            "options": {"num_ctx": 16384}, "stream": False
-                        }, timeout=300
-                    )
-                    vision_data = vision_resp.json()
-                    if "message" not in vision_data:
-                        return f"Vision error: {vision_data.get('error', str(vision_data))}"
-                    code_input = "Image context:\n" + vision_data["message"]["content"] + "\n\nTask: " + user_message
-                    return self._call_llm(self.valves.coder_url, self.valves.coder_model, [
-                        {"role": "system", "content": "You are an expert programmer. Write complete, working code with clear comments."},
-                        {"role": "user", "content": code_input}
-                    ], 16384)
+            stage1_system = (
+                "You are a senior software architect and visual analyst. Your job is Stage 1 of a two-stage pipeline.\n"
+                "Analyze the user's request" + (" and the attached image/screenshot" if images else "") + ".\n"
+                "Output:\n"
+                "1. What you see / understand about the task\n"
+                "2. A clear numbered implementation plan (architecture, files, data flow)\n"
+                "Do NOT write code — only analyze and plan. Be concise and precise."
+            )
+            stage2_system = (
+                "You are an expert software engineer. You receive a task + implementation plan from Stage 1.\n"
+                "Your job: implement it completely. Write production-ready, working code with no stubs or TODOs.\n"
+                "Think carefully before writing. Use the plan as your guide."
+            )
 
-                def _gen_vision():
-                    self._emit(__event_emitter__, "Analyzing image...")
-                    yield ""
-                    vision_resp = requests.post(
-                        self.valves.vision_url + "/api/chat",
-                        json={
-                            "model": self.valves.vision_model,
-                            "messages": [{"role": "user", "content": "Describe this image in full technical detail for a software developer. Include all visible code, UI elements, error messages, diagrams, and text. Task: " + user_message, "images": images}],
-                            "options": {"num_ctx": 16384}, "stream": False
-                        }, timeout=300
-                    )
-                    vision_data = vision_resp.json()
-                    if "message" not in vision_data:
-                        yield f"Vision error: {vision_data.get('error', str(vision_data))}"
-                        return
-                    code_input = "Image context:\n" + vision_data["message"]["content"] + "\n\nTask: " + user_message
-                    self._emit(__event_emitter__, "Coding...")
-                    yield ""
-                    with requests.post(
-                        self.valves.coder_url + "/api/chat",
-                        json={"model": self.valves.coder_model, "messages": [
-                            {"role": "system", "content": "You are an expert programmer. Write complete, working code with clear comments."},
-                            {"role": "user", "content": code_input}
-                        ], "options": {"num_ctx": 16384}, "stream": True},
-                        stream=True, timeout=(10, None)
-                    ) as resp:
-                        for line in resp.iter_lines():
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                            except Exception:
-                                continue
-                            chunk = data.get("message", {}).get("content", "")
-                            if chunk:
-                                yield chunk
-                            if data.get("done"):
-                                break
-                return _gen_vision()
+            if not want_stream:
+                self._emit(__event_emitter__, "Analyzing...")
+                plan = self._call_stage1(user_message, images, stage1_system)
+                stage2_input = f"Original task: {user_message}\n\nAnalysis & Plan:\n{plan}\n\nNow implement:"
+                resp = requests.post(
+                    self.valves.reasoning_url + "/api/chat",
+                    json={"model": self.valves.reasoning_model,
+                          "messages": [{"role": "system", "content": stage2_system}, {"role": "user", "content": stage2_input}],
+                          "options": {"num_ctx": 16384}, "stream": False},
+                    timeout=300
+                )
+                data = resp.json()
+                return data.get("message", {}).get("content", f"Stage 2 error: {data.get('error', str(data))}")
 
-            else:
-                if not want_stream:
-                    plan = self._call_llm(self.valves.planner_url, self.valves.planner_model, [
-                        {"role": "system", "content": "You are a senior software architect. Given a coding task, produce a concise numbered implementation plan. Do not write code."},
-                        {"role": "user", "content": user_message}
-                    ], 4096)
-                    code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + plan
-                    return self._call_llm(self.valves.coder_url, self.valves.coder_model, [
-                        {"role": "system", "content": "You are an expert programmer. Implement the solution according to the provided context. Write complete, working code with clear comments."},
-                        {"role": "user", "content": code_input}
-                    ], 16384)
-
-                def _gen_plan():
-                    self._emit(__event_emitter__, "Planning...")
-                    yield ""
-                    plan_chunks = []
-                    yield "### Plan  *(deepseek-r1:7b)*\n\n"
-                    with requests.post(
-                        self.valves.planner_url + "/api/chat",
-                        json={"model": self.valves.planner_model, "messages": [
-                            {"role": "system", "content": "You are a senior software architect. Given a coding task, produce a concise numbered implementation plan. Do not write code — only plan the approach and structure."},
-                            {"role": "user", "content": user_message}
-                        ], "options": {"num_ctx": 4096}, "stream": True},
-                        stream=True, timeout=(10, None)
-                    ) as resp:
-                        for line in resp.iter_lines():
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                            except Exception:
-                                continue
-                            chunk = data.get("message", {}).get("content", "")
-                            if chunk:
-                                plan_chunks.append(chunk)
-                                yield chunk
-                            if data.get("done"):
-                                break
-
-                    code_input = "Task: " + user_message + "\n\nImplementation Plan:\n" + "".join(plan_chunks)
-                    yield "\n\n---\n\n### Code  *(qwen2.5-coder:14b)*\n\n"
-                    self._emit(__event_emitter__, "Coding...")
-                    with requests.post(
-                        self.valves.coder_url + "/api/chat",
-                        json={"model": self.valves.coder_model, "messages": [
-                            {"role": "system", "content": "You are an expert programmer. Implement the solution according to the provided context. Write complete, working code with clear comments."},
-                            {"role": "user", "content": code_input}
-                        ], "options": {"num_ctx": 16384}, "stream": True},
-                        stream=True, timeout=(10, None)
-                    ) as resp:
-                        for line in resp.iter_lines():
-                            if not line:
-                                continue
-                            try:
-                                data = json.loads(line)
-                            except Exception:
-                                continue
-                            chunk = data.get("message", {}).get("content", "")
-                            if chunk:
-                                yield chunk
-                            if data.get("done"):
-                                break
-                return _gen_plan()
+            def _gen():
+                self._emit(__event_emitter__, "Analyzing & planning (B50 Pro)...")
+                yield ""
+                plan = self._call_stage1(user_message, images, stage1_system)
+                yield "### Analysis & Plan\n\n" + plan + "\n\n---\n\n### Implementation\n\n"
+                self._emit(__event_emitter__, "Implementing (B580, thinking mode)...")
+                yield ""
+                stage2_input = f"Original task: {user_message}\n\nAnalysis & Plan:\n{plan}\n\nNow implement:"
+                with requests.post(
+                    self.valves.reasoning_url + "/api/chat",
+                    json={"model": self.valves.reasoning_model,
+                          "messages": [{"role": "system", "content": stage2_system}, {"role": "user", "content": stage2_input}],
+                          "options": {"num_ctx": 16384}, "stream": True},
+                    stream=True, timeout=(10, None)
+                ) as resp:
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        chunk = data.get("message", {}).get("content", "")
+                        if chunk:
+                            yield chunk
+                        if data.get("done"):
+                            break
+            return _gen()
 
   # ===========================================================================
   # Finance Pipeline
@@ -379,15 +326,17 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://llm:11434"
+            # Stage 1: B50 Pro — chart vision + search query extraction (qwen2.5vl:7b)
+            vision_url: str = "http://coding:11437"
             vision_model: str = "qwen2.5vl:7b"
+            # Stage 2: B580 — deep financial reasoning (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
-            reasoning_model: str = "deepseek-r1:14b"
+            reasoning_model: str = "qwen3:14b"
             searxng_url: str = "http://searxng:8080/search"
             search_results: int = 5
 
         def __init__(self):
-            self.name = "Finance Pipeline (Vision → Analysis)"
+            self.name = "Finance Pipeline (Vision → Search → Analysis)"
             self.valves = self.Valves()
             try:
                 self._loop = asyncio.get_event_loop()
@@ -599,10 +548,12 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            vision_url: str = "http://llm:11434"
+            # Stage 1: B50 Pro — image description (qwen2.5vl:7b)
+            vision_url: str = "http://coding:11437"
             vision_model: str = "qwen2.5vl:7b"
+            # Stage 2: B580 — deep reasoning (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
-            reasoning_model: str = "deepseek-r1:14b"
+            reasoning_model: str = "qwen3:14b"
 
         def __init__(self):
             self.name = "Vision Pipeline (Describe → Reason)"

@@ -50,11 +50,9 @@ spec:
             - |
               ollama serve &
               until ollama list > /dev/null 2>&1; do sleep 2; done
-              echo "Pulling {{ .Values.llm.defaultModel }} (coding)..."
+              echo "Pulling {{ .Values.llm.defaultModel }}..."
               ollama pull {{ .Values.llm.defaultModel }}
-              echo "Pulling {{ .Values.llm.financeModel }} (finance)..."
-              ollama pull {{ .Values.llm.financeModel }}
-              echo "Warming up {{ .Values.llm.defaultModel }} into VRAM across both GPUs..."
+              echo "Warming up {{ .Values.llm.defaultModel }} into VRAM (B580)..."
               echo "hello" | ollama run {{ .Values.llm.defaultModel }} 2>/dev/null || true
               touch /tmp/model-ready
               echo "Model ready."
