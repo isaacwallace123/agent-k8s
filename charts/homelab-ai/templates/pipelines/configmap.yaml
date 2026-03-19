@@ -28,7 +28,7 @@ data:
             chat_url: str = "http://summarizer:11436"
             chat_model: str = "qwen2.5:7b"
             vision_url: str = "http://llm:11434"
-            vision_model: str = "qwen2.5vl:7b"
+            vision_model: str = "qwen2.5vl:3b"
 
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
@@ -174,9 +174,9 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            # Stage 1: B50 Pro — vision + analysis + planning (qwen2.5vl:7b)
+            # Stage 1: B50 Pro — vision + analysis + planning (qwen2.5vl:3b)
             analysis_url: str = "http://coding:11437"
-            analysis_model: str = "qwen2.5vl:7b"
+            analysis_model: str = "qwen2.5vl:3b"
             # Stage 2: B580 — deep reasoning + implementation (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "qwen3:14b"
@@ -328,7 +328,7 @@ data:
         class Valves(BaseModel):
             # Stage 1: B50 Pro — chart vision + search query extraction (qwen2.5vl:7b)
             vision_url: str = "http://coding:11437"
-            vision_model: str = "qwen2.5vl:7b"
+            vision_model: str = "qwen2.5vl:3b"
             # Stage 2: B580 — deep financial reasoning (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "qwen3:14b"
@@ -550,7 +550,7 @@ data:
         class Valves(BaseModel):
             # Stage 1: B50 Pro — image description (qwen2.5vl:7b)
             vision_url: str = "http://coding:11437"
-            vision_model: str = "qwen2.5vl:7b"
+            vision_model: str = "qwen2.5vl:3b"
             # Stage 2: B580 — deep reasoning (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "qwen3:14b"
