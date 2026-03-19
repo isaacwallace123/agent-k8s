@@ -27,80 +27,69 @@ global:
     - 993  # render (confirmed on these nodes)
 
 # =============================================================================
-# LLM — Finance AI — occasional use, strong math/reasoning
-# Runs on pve1 (Intel Arc B580 12GB)
-# Served via Ollama. Model files live on pve1 SATA SSD (mounted as PVC).
+# LLM — Unified inference pod for ALL models
+# Runs on pve1 with BOTH GPUs: Intel Arc B580 (12GB) + B50 Pro (16GB) = 28GB
+# Standard ollama/ollama image with Vulkan — works on both Arc GPUs.
+# GGML splits model layers proportionally across both GPUs automatically.
+# Only ONE model loaded in VRAM at a time (OLLAMA_MAX_LOADED_MODELS=1).
+# Switching models takes ~10-20s (unload old → load new).
 # =============================================================================
 llm:
   enabled: true
 
   image:
-    repository: intelanalytics/ipex-llm-inference-cpp-xpu
-    tag: latest
+    repository: ollama/ollama
+    tag: "latest"
     pullPolicy: IfNotPresent
 
-  # Port the Ollama API listens on
   port: 11434
 
-  # Default model for Overwatch analysis.
-  # Pull: kubectl exec -n homelab-ai deploy/llm -- ollama pull qwen2.5:14b
-  defaultModel: "qwen2.5:14b"
+  # Coding model — warmed up at startup, uses both GPUs (layer split)
+  defaultModel: "qwen2.5-coder:14b"
 
-  # Resource requests/limits
+  # Finance model — pulled at startup, loaded on first finance chat
+  financeModel: "qwen3:8b"
+
   resources:
     requests:
       cpu: "4"
       memory: "16Gi"
     limits:
-      cpu: "16"    # 13700KF has 16 threads — available for KV cache spill beyond 16K ctx
-      memory: "44Gi"  # allows 16K in VRAM + large context spill into 48GB DDR4
-      # gpu.intel.com/xe: 1
+      cpu: "16"
+      memory: "44Gi"
 
-  # PVC for model files — mounted on SATA SSD via local-path
   storage:
     enabled: true
     size: 200Gi
-    storageClass: ""   # inherits global.storageClass if empty
+    storageClass: ""
     mountPath: /root/.ollama
 
-  # Environment variables
   env:
     - name: OLLAMA_HOST
       value: "0.0.0.0:11434"
-    - name: ONEAPI_DEVICE_SELECTOR
-      value: "level_zero:0"
+    # Vulkan backend — works on both B580 (Alchemist) and B50 Pro (Battlemage)
+    - name: OLLAMA_VULKAN
+      value: "1"
+    # Expose both GPUs: B580 = Vulkan0, B50 Pro = Vulkan1
+    # ggml splits model layers proportionally across both (12GB:16GB ratio)
+    - name: GGML_VK_VISIBLE_DEVICES
+      value: "0,1"
     - name: OLLAMA_NUM_GPU
       value: "999"
-    - name: ZES_ENABLE_SYSMAN
-      value: "1"
     - name: no_proxy
       value: "localhost,127.0.0.1"
-    # Keep model loaded forever — eliminates cold-start reload penalty
+    # Keep whichever model is active loaded forever (no idle unload)
     - name: OLLAMA_KEEP_ALIVE
       value: "-1"
-    # Dedicate all VRAM to a single request (single-user homelab)
     - name: OLLAMA_NUM_PARALLEL
       value: "1"
-    # Prevent two models from splitting VRAM simultaneously
+    # Only one model in VRAM at a time — switching unloads the previous model
     - name: OLLAMA_MAX_LOADED_MODELS
       value: "1"
-    # Hardware-accelerated attention on Intel Arc
-    - name: OLLAMA_FLASH_ATTENTION
-      value: "1"
-    # Persist compiled SYCL/oneAPI GPU kernels — avoids recompile on pod restart
-    - name: SYCL_CACHE_PERSISTENT
-      value: "1"
-    # Store SYCL kernel cache on the model PVC so it survives pod restarts
-    - name: SYCL_CACHE_DIR
-      value: "/root/.ollama/.sycl-cache"
-    # Halve KV cache VRAM usage — 14b models get ~16K ctx fully in VRAM (3.5GB free)
-    # Overflow beyond that spills to 48GB DDR4 via 13700KF — still fast
     - name: OLLAMA_KV_CACHE_TYPE
       value: "q8_0"
-    # Lock context window — prevents model reload when pipeline requests num_ctx=16384
-    # Without this, Ollama reloads the full model (~20s SYCL init) on every context mismatch
     - name: OLLAMA_CONTEXT_LENGTH
-      value: "16384"
+      value: "32768"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -128,12 +117,11 @@ llm:
 # Also serves as the portfolio insight model via Open WebUI system prompts.
 # =============================================================================
 coding:
-  enabled: true
+  # Disabled — both models now served by the unified llm pod (both GPUs)
+  enabled: false
 
   image:
     repository: ollama/ollama
-    # Standard Ollama with ggml-sycl backend — avoids bigdl's broken XMX SDP kernel on B50 Pro (Battlemage/xe2)
-    # All IPEX-LLM versions (2.1.0, 2.2.0-SNAPSHOT, 2.3.0) crash on Battlemage during inference.
     tag: "latest"
     pullPolicy: IfNotPresent
 
@@ -535,8 +523,8 @@ openwebui:
 
   port: 8080
 
-  # Semicolon-separated Ollama URLs — Open WebUI registers both automatically
-  ollamaBaseUrl: "http://coding:11437;http://llm:11434"
+  # Single Ollama endpoint — both models (coder + finance) served by the unified llm pod
+  ollamaBaseUrl: "http://llm:11434"
 
   resources:
     requests:
@@ -570,9 +558,9 @@ openwebui:
       value: "nomic-embed-text"
     - name: RAG_OLLAMA_BASE_URL
       value: "http://embeddings:11435"
-    # Default to coding model for new chats
+    # Default to coding model for new chats (finance model = qwen3:8b)
     - name: DEFAULT_MODELS
-      value: "qwen2.5-coder:14b"
+      value: "coder"
     # Disable the default OpenAI API connection — we use Ollama only
     - name: ENABLE_OPENAI_API
       value: "false"
