@@ -171,7 +171,13 @@ coding:
       value: "1"
     - name: OLLAMA_MAX_LOADED_MODELS
       value: "1"
-    - name: OLLAMA_FLASH_ATTENTION
+    # Flash attention not supported on B50 Pro (Battlemage) — causes XMX SDP kernel crash
+    # - name: OLLAMA_FLASH_ATTENTION
+    #   value: "1"
+    # Disable Intel XMX SDP attention kernel — crashes on B50 Pro in current IPEX-LLM image
+    - name: GGML_SYCL_DISABLE_GRAPH
+      value: "1"
+    - name: GGML_SYCL_DISABLE_OPT
       value: "1"
     - name: SYCL_CACHE_PERSISTENT
       value: "1"
