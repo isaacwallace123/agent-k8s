@@ -572,6 +572,9 @@ openwebui:
     # Default to coding model for new chats
     - name: DEFAULT_MODELS
       value: "qwen2.5-coder:14b"
+    # Disable the default OpenAI API connection — we use Ollama only
+    - name: ENABLE_OPENAI_API
+      value: "false"
     # Disable sign-ups — single user homelab
     - name: ENABLE_SIGNUP
       value: "false"
