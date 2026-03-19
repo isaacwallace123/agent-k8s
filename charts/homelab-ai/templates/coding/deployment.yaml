@@ -48,7 +48,15 @@ spec:
           # ipex-llm-inference-cpp-xpu default CMD is /bin/bash (exits immediately).
           # Must source oneAPI env then run ollama serve explicitly.
           command: ["/bin/bash", "-c"]
-          args: ["source /opt/intel/oneapi/setvars.sh --force && /usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs/ollama/ollama serve"]
+          args:
+            - |
+              source /opt/intel/oneapi/setvars.sh --force
+              OLLAMA=/usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs/ollama/ollama
+              $OLLAMA serve &
+              until $OLLAMA list > /dev/null 2>&1; do sleep 2; done
+              echo "Pulling {{ .Values.coding.defaultModel }}..."
+              $OLLAMA pull {{ .Values.coding.defaultModel }}
+              wait
 
           # privileged gives level_zero access to /sys/class/drm for GPU enumeration
           securityContext:
