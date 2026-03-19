@@ -93,7 +93,8 @@ spec:
                   )
                   try:
                       with urllib.request.urlopen(req, timeout=15) as r:
-                          return json.loads(r.read()), r.status
+                          body = r.read()
+                          return json.loads(body) if body else {}, r.status
                   except urllib.error.HTTPError as e:
                       body = e.read().decode()
                       return json.loads(body) if body else {}, e.code
