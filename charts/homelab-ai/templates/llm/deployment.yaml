@@ -1,9 +1,10 @@
 {{- if .Values.llm.enabled }}
 ---
 # =============================================================================
-# LLM — Main coding / chat model (Ollama)
-# Scheduled on pve1 (Intel Arc B580 12GB)
+# LLM — Unified inference pod (Ollama)
+# Scheduled on pve1 — uses BOTH GPUs: B580 (12GB) + B50 Pro (16GB) via Vulkan
 # Model files stored on pve1 SATA SSD via PVC.
+# Only one model loaded in VRAM at a time (OLLAMA_MAX_LOADED_MODELS=1).
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -44,20 +45,17 @@ spec:
         - name: ollama
           image: "{{ .Values.llm.image.repository }}:{{ .Values.llm.image.tag }}"
           imagePullPolicy: {{ .Values.llm.image.pullPolicy }}
-          # ipex-llm-inference-cpp-xpu default CMD is /bin/bash (exits immediately).
-          # Must source oneAPI env then run ollama serve explicitly.
           command: ["/bin/bash", "-c"]
           args:
             - |
-              source /opt/intel/oneapi/setvars.sh --force
-              OLLAMA=$(find /usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs -name "ollama" ! -name "ollama-lib" -type f 2>/dev/null | head -1)
-              [ -z "$OLLAMA" ] && OLLAMA=/usr/local/lib/python3.11/dist-packages/bigdl/cpp/libs/ollama/ollama
-              $OLLAMA serve &
-              until $OLLAMA list > /dev/null 2>&1; do sleep 2; done
-              echo "Pulling {{ .Values.llm.defaultModel }}..."
-              $OLLAMA pull {{ .Values.llm.defaultModel }}
-              echo "Warming up {{ .Values.llm.defaultModel }} into VRAM..."
-              echo "hello" | $OLLAMA run {{ .Values.llm.defaultModel }} 2>/dev/null || true
+              ollama serve &
+              until ollama list > /dev/null 2>&1; do sleep 2; done
+              echo "Pulling {{ .Values.llm.defaultModel }} (coding)..."
+              ollama pull {{ .Values.llm.defaultModel }}
+              echo "Pulling {{ .Values.llm.financeModel }} (finance)..."
+              ollama pull {{ .Values.llm.financeModel }}
+              echo "Warming up {{ .Values.llm.defaultModel }} into VRAM across both GPUs..."
+              echo "hello" | ollama run {{ .Values.llm.defaultModel }} 2>/dev/null || true
               touch /tmp/model-ready
               echo "Model ready."
               wait
