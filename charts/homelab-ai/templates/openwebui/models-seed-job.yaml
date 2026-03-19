@@ -141,7 +141,7 @@ spec:
 
                   if status == 200:
                       # Update existing model
-                      resp, status = api("/api/v1/models/update", data=model, token=token, method="POST")
+                      resp, status = api(f"/api/v1/models/{model_id}", data=model, token=token, method="POST")
                       if status in (200, 201):
                           print(f"  Updated model: {model_id}")
                       else:
