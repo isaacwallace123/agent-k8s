@@ -27,12 +27,11 @@ global:
     - 993  # render (confirmed on these nodes)
 
 # =============================================================================
-# LLM — Unified inference pod for ALL models
-# Runs on pve1 with BOTH GPUs: Intel Arc B580 (12GB) + B50 Pro (16GB) = 28GB
-# Standard ollama/ollama image with Vulkan — works on both Arc GPUs.
-# GGML splits model layers proportionally across both GPUs automatically.
-# Only ONE model loaded in VRAM at a time (OLLAMA_MAX_LOADED_MODELS=1).
-# Switching models takes ~10-20s (unload old → load new).
+# LLM — Stage 2: Deep reasoning / final answer (Intel Arc B580 12GB)
+# Runs on pve1, B580 only (Vulkan device 0).
+# qwen3:14b Q4 ≈ 9GB + q8_0 KV cache at 16K ≈ 0.7GB = ~9.7GB — fits in 12GB.
+# Has built-in thinking mode for deep analysis and reasoning.
+# Always hot — receives planned context from coding pod's qwen2.5vl.
 # =============================================================================
 llm:
   enabled: true
@@ -44,11 +43,8 @@ llm:
 
   port: 11434
 
-  # Coding model — warmed up at startup, uses both GPUs (layer split)
-  defaultModel: "qwen2.5-coder:14b"
-
-  # Finance model — pulled at startup, loaded on first finance chat
-  financeModel: "qwen3:8b"
+  # Deep reasoning model — receives analysis/plan from Stage 1, produces final answer
+  defaultModel: "qwen3:14b"
 
   resources:
     requests:
@@ -67,29 +63,26 @@ llm:
   env:
     - name: OLLAMA_HOST
       value: "0.0.0.0:11434"
-    # Vulkan backend — works on both B580 (Alchemist) and B50 Pro (Battlemage)
     - name: OLLAMA_VULKAN
       value: "1"
-    # Expose both GPUs: B580 = Vulkan0, B50 Pro = Vulkan1
-    # ggml splits model layers proportionally across both (12GB:16GB ratio)
+    # B580 is Vulkan device 0 — dedicated to Stage 2 reasoning
     - name: GGML_VK_VISIBLE_DEVICES
-      value: "0,1"
+      value: "0"
     - name: OLLAMA_NUM_GPU
       value: "999"
     - name: no_proxy
       value: "localhost,127.0.0.1"
-    # Keep whichever model is active loaded forever (no idle unload)
     - name: OLLAMA_KEEP_ALIVE
       value: "-1"
     - name: OLLAMA_NUM_PARALLEL
       value: "1"
-    # Only one model in VRAM at a time — switching unloads the previous model
     - name: OLLAMA_MAX_LOADED_MODELS
       value: "1"
     - name: OLLAMA_KV_CACHE_TYPE
       value: "q8_0"
+    # 16K is sufficient for reasoning; keeps model comfortably within B580's 12GB
     - name: OLLAMA_CONTEXT_LENGTH
-      value: "32768"
+      value: "16384"
 
   # Node scheduling — pin to pve1
   nodeSelector: {}   # populated via _helpers.tpl using global.pve1
@@ -116,9 +109,15 @@ llm:
 # qwen2.5-coder:14b at Q8 fits entirely in 16GB VRAM — zero system RAM spill.
 # Also serves as the portfolio insight model via Open WebUI system prompts.
 # =============================================================================
+# =============================================================================
+# Coding — Stage 1: Vision / analysis / planning (Intel Arc B50 Pro 16GB)
+# Runs on pve1, B50 Pro only (Vulkan device 1).
+# qwen2.5vl:7b ≈ 5.5GB — vision capable, fast planning, fits easily in 16GB.
+# Pipeline: user input + image → this pod analyzes → llm pod reasons → answer.
+# Also available as a direct model ("Coder") in Open WebUI for quick tasks.
+# =============================================================================
 coding:
-  # Disabled — both models now served by the unified llm pod (both GPUs)
-  enabled: false
+  enabled: true
 
   image:
     repository: ollama/ollama
@@ -127,16 +126,16 @@ coding:
 
   port: 11437
 
-  defaultModel: "qwen2.5-coder:14b"
+  # Vision + analysis model — Stage 1 of all pipelines
+  defaultModel: "qwen2.5vl:7b"
 
   resources:
     requests:
       cpu: "4"
       memory: "16Gi"
     limits:
-      cpu: "16"    # 13700KF has 16 threads — shared with finance pod (different GPU, same node)
-      memory: "32Gi"  # Q8 14b ~15GB VRAM, minimal KV spill needed
-      # gpu.intel.com/xe: 1
+      cpu: "16"
+      memory: "32Gi"
 
   storage:
     enabled: true
@@ -523,8 +522,8 @@ openwebui:
 
   port: 8080
 
-  # Single Ollama endpoint — both models (coder + finance) served by the unified llm pod
-  ollamaBaseUrl: "http://llm:11434"
+  # Both Ollama services: llm = Stage 2 reasoning (B580), coding = Stage 1 vision (B50 Pro)
+  ollamaBaseUrl: "http://llm:11434;http://coding:11437"
 
   resources:
     requests:
@@ -561,9 +560,14 @@ openwebui:
     # Default to coding model for new chats (finance model = qwen3:8b)
     - name: DEFAULT_MODELS
       value: "coder"
-    # Disable the default OpenAI API connection — we use Ollama only
+    # Connect to pipelines service as OpenAI-compatible endpoint
+    # Exposes: Coding Pipeline, Finance Pipeline (multi-stage chained inference)
     - name: ENABLE_OPENAI_API
-      value: "false"
+      value: "true"
+    - name: OPENAI_API_BASE_URL
+      value: "http://pipelines:9099"
+    - name: OPENAI_API_KEY
+      value: "homelab-pipelines-key"
     # Disable sign-ups — single user homelab
     - name: ENABLE_SIGNUP
       value: "false"
@@ -592,7 +596,7 @@ openwebui:
 #   Vision Pipeline  — qwen2.5vl:7b describes image → deepseek-r1:14b reasons
 # =============================================================================
 pipelines:
-  enabled: false
+  enabled: true
 
   image:
     repository: ghcr.io/open-webui/pipelines
