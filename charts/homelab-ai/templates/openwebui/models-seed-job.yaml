@@ -53,8 +53,10 @@ spec:
           imagePullPolicy: IfNotPresent
 
           env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
             - name: WEBUI_URL
-              value: "http://openwebui:{{ .Values.openwebui.port }}"
+              value: "http://openwebui:80"
             - name: ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
