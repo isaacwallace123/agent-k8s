@@ -556,6 +556,9 @@ openwebui:
     # Web search via SearXNG (v0.8.x env var names)
     - name: ENABLE_WEB_SEARCH
       value: "true"
+    # Enable web search toggle by default in every new chat
+    - name: ENABLE_SEARCH_QUERY
+      value: "true"
     - name: WEB_SEARCH_ENGINE
       value: "searxng"
     - name: SEARXNG_QUERY_URL
