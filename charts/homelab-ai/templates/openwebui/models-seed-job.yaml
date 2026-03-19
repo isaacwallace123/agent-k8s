@@ -1,0 +1,149 @@
+{{- if .Values.openwebui.enabled }}
+---
+# =============================================================================
+# Open WebUI — Model Seed Job (Helm post-install / post-upgrade hook)
+#
+# Runs after every deploy. Signs into Open WebUI with the configured admin
+# credentials, then creates or updates the Coder and Finance model presets
+# defined in the openwebui-model-presets ConfigMap.
+#
+# Prerequisites:
+#   1. Open WebUI must be running and the admin account must already exist.
+#      (Visit the UI once after first install to create the admin account.)
+#   2. Set the real password in values-secret.yaml:
+#        openwebui:
+#          admin:
+#            email: "your@email.com"
+#            password: "your-password"
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openwebui-seed-models
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "homelab-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openwebui
+  annotations:
+    # Run after deploy, clean up the previous Job before creating a new one
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  # Retry up to 3 times — Open WebUI may still be starting after a fresh deploy
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui-seed" "context" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+
+      volumes:
+        - name: model-presets
+          configMap:
+            name: openwebui-model-presets
+
+      containers:
+        - name: seed
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: WEBUI_URL
+              value: "http://openwebui:{{ .Values.openwebui.port }}"
+            - name: ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-admin-secret
+                  key: email
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-admin-secret
+                  key: password
+
+          volumeMounts:
+            - name: model-presets
+              mountPath: /config
+
+          command: ["python3", "-c"]
+          args:
+            - |
+              import urllib.request, urllib.error, json, os, time, sys
+
+              WEBUI_URL   = os.environ["WEBUI_URL"]
+              ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
+              ADMIN_PASS  = os.environ["ADMIN_PASSWORD"]
+
+              def api(path, data=None, token=None, method=None):
+                  headers = {"Content-Type": "application/json"}
+                  if token:
+                      headers["Authorization"] = f"Bearer {token}"
+                  req = urllib.request.Request(
+                      f"{WEBUI_URL}{path}",
+                      data=json.dumps(data).encode() if data else None,
+                      headers=headers,
+                      method=method,
+                  )
+                  try:
+                      with urllib.request.urlopen(req, timeout=15) as r:
+                          return json.loads(r.read()), r.status
+                  except urllib.error.HTTPError as e:
+                      body = e.read().decode()
+                      return json.loads(body) if body else {}, e.code
+
+              # Wait for Open WebUI to be healthy
+              print("Waiting for Open WebUI...")
+              for attempt in range(60):
+                  try:
+                      urllib.request.urlopen(f"{WEBUI_URL}/health", timeout=5)
+                      print("Open WebUI is ready.")
+                      break
+                  except Exception as e:
+                      print(f"  attempt {attempt+1}/60: {e}")
+                      time.sleep(5)
+              else:
+                  print("ERROR: Open WebUI did not become ready in time.")
+                  sys.exit(1)
+
+              # Sign in
+              print(f"Signing in as {ADMIN_EMAIL}...")
+              resp, status = api("/api/v1/auths/signin", {"email": ADMIN_EMAIL, "password": ADMIN_PASS})
+              if status != 200 or "token" not in resp:
+                  print(f"ERROR: Sign-in failed (HTTP {status}): {resp}")
+                  print("Make sure the admin account exists (visit the UI once after first install).")
+                  sys.exit(1)
+              token = resp["token"]
+              print("Signed in successfully.")
+
+              # Load model presets
+              with open("/config/models.json") as f:
+                  models = json.load(f)
+
+              for model in models:
+                  model_id = model["id"]
+
+                  # Check if model already exists
+                  _, status = api(f"/api/v1/models/{model_id}", token=token)
+
+                  if status == 200:
+                      # Update existing model
+                      resp, status = api("/api/v1/models/update", data=model, token=token, method="POST")
+                      if status in (200, 201):
+                          print(f"  Updated model: {model_id}")
+                      else:
+                          print(f"  WARN: Could not update {model_id} (HTTP {status}): {resp}")
+                  else:
+                      # Create new model
+                      resp, status = api("/api/v1/models/create", data=model, token=token, method="POST")
+                      if status in (200, 201):
+                          print(f"  Created model: {model_id}")
+                      else:
+                          print(f"  WARN: Could not create {model_id} (HTTP {status}): {resp}")
+
+              print("Done.")
+{{- end }}

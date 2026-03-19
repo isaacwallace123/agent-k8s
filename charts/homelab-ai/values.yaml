@@ -522,7 +522,10 @@ redis:
 # Open WebUI — Chat interface for Ollama
 # Runs on pve2 apps node (k3s-worker-node-2)
 # Exposed via MetalLB LoadBalancer for LAN access.
-# Connects to the LLM service internally at http://llm:11434
+#
+# Ollama connections (semicolon-separated = both appear in UI automatically):
+#   coding:11437  — primary: coding / planning / portfolio insights (B50 Pro)
+#   llm:11434     — secondary: finance AI (B580)
 # =============================================================================
 openwebui:
   enabled: true
@@ -534,8 +537,8 @@ openwebui:
 
   port: 8080
 
-  # Internal URL of the Ollama LLM service
-  ollamaBaseUrl: "http://coding:11437"
+  # Semicolon-separated Ollama URLs — Open WebUI registers both automatically
+  ollamaBaseUrl: "http://coding:11437;http://llm:11434"
 
   resources:
     requests:
@@ -552,20 +555,32 @@ openwebui:
     mountPath: /app/backend/data
 
   env:
-    # RAG web search via SearXNG (self-hosted, no API key needed)
-    - name: ENABLE_RAG_WEB_SEARCH
+    # Web search via SearXNG (v0.8.x env var names)
+    - name: ENABLE_WEB_SEARCH
       value: "true"
-    - name: RAG_WEB_SEARCH_ENGINE
+    - name: WEB_SEARCH_ENGINE
       value: "searxng"
     - name: SEARXNG_QUERY_URL
       value: "http://searxng:8080/search?q=<query>&format=json"
-    # Use the dedicated embeddings service for RAG document indexing
+    # Embeddings via dedicated A380 service for RAG document indexing
     - name: RAG_EMBEDDING_ENGINE
       value: "ollama"
     - name: RAG_EMBEDDING_MODEL
       value: "nomic-embed-text"
     - name: RAG_OLLAMA_BASE_URL
       value: "http://embeddings:11435"
+    # Default to coding model for new chats
+    - name: DEFAULT_MODELS
+      value: "qwen2.5-coder:14b"
+    # Disable sign-ups — single user homelab
+    - name: ENABLE_SIGNUP
+      value: "false"
+    # Allow embedding service to be called cross-origin
+    - name: CORS_ALLOW_ORIGIN
+      value: "*"
+
+  # Admin credentials are stored in the openwebui-admin-secret SealedSecret
+  # (templates/openwebui/sealed-secret.yaml) — no plaintext values needed here.
 
   # Pin to pve2 apps node (k3s-worker-node-2)
   nodeSelector: {}
