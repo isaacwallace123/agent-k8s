@@ -104,17 +104,13 @@ llm:
       path: /api/tags
 
 # =============================================================================
-# Coding — Primary coding / planning model
-# Runs on pve1 (Intel Arc B50 Pro 16GB)
-# qwen2.5-coder:14b at Q8 fits entirely in 16GB VRAM — zero system RAM spill.
-# Also serves as the portfolio insight model via Open WebUI system prompts.
-# =============================================================================
-# =============================================================================
 # Coding — Stage 1: Vision / analysis / planning (Intel Arc B50 Pro 16GB)
 # Runs on pve1, B50 Pro only (Vulkan device 1).
-# qwen2.5vl:7b ≈ 5.5GB — vision capable, fast planning, fits easily in 16GB.
+# llava:7b ≈ 4.7GB Q4 — vision capable (CLIP ViT-L/14), fits easily in 16GB.
+# qwen2.5vl (all sizes) is INCOMPATIBLE with Intel Arc Mesa Vulkan — its vision
+# encoder requires a 14.5GB single contiguous buffer, exceeding the ~4GB
+# maxStorageBufferRange limit.  LLaVA's CLIP encoder only needs ~300MB.
 # Pipeline: user input + image → this pod analyzes → llm pod reasons → answer.
-# Also available as a direct model ("Coder") in Open WebUI for quick tasks.
 # =============================================================================
 coding:
   enabled: true
@@ -127,9 +123,8 @@ coding:
   port: 11437
 
   # Vision + analysis model — Stage 1 of all pipelines
-  # qwen2.5vl:7b exceeds Intel Arc Vulkan maxStorageBufferRange (4GB/buffer limit on Mesa driver)
-  # 3b compute graph stays within the 4GB per-buffer Vulkan cap
-  defaultModel: "qwen2.5vl:3b"
+  # llava:7b uses CLIP vision encoder (~300MB buffer) — works on Intel Arc Vulkan
+  defaultModel: "llava:7b"
 
   resources:
     requests:

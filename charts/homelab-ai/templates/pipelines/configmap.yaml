@@ -13,7 +13,7 @@ data:
   # ===========================================================================
   # Chat Pipeline — fast conversational chat with optional image support
   # No image: qwen2.5:7b streams
-  # With image: qwen2.5vl:3b streams
+  # With image: llava:7b streams
   # ===========================================================================
   chat_pipeline.py: |
     import asyncio
@@ -28,7 +28,7 @@ data:
             chat_url: str = "http://summarizer:11436"
             chat_model: str = "qwen2.5:7b"
             vision_url: str = "http://llm:11434"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_model: str = "llava:7b"
 
         def __init__(self):
             self.name = "Chat Pipeline (Vision → Chat)"
@@ -162,7 +162,7 @@ data:
   # ===========================================================================
   # Coding Pipeline
   # No image:    deepseek-r1:7b streams plan → qwen2.5-coder:14b streams code
-  # With image:  qwen2.5vl:3b describes (blocking) → qwen2.5-coder:14b streams code
+  # With image:  llava:7b describes (blocking) → qwen2.5-coder:14b streams code
   # ===========================================================================
   coding_pipeline.py: |
     import asyncio
@@ -174,9 +174,9 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            # Stage 1: B50 Pro — vision + analysis + planning (qwen2.5vl:3b)
+            # Stage 1: B50 Pro — vision + analysis + planning (llava:7b)
             analysis_url: str = "http://coding:11437"
-            analysis_model: str = "qwen2.5vl:3b"
+            analysis_model: str = "llava:7b"
             # Stage 2: B580 — deep reasoning + implementation (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "qwen3:14b"
@@ -309,7 +309,7 @@ data:
 
   # ===========================================================================
   # Finance Pipeline
-  # Phase 1 (if image): qwen2.5vl:3b analyzes chart  → extract ticker + search query
+  # Phase 1 (if image): llava:7b analyzes chart  → extract ticker + search query
   # Phase 2:            SearXNG web search            → live market data
   # Phase 3:            deepseek-r1:14b streams       → structured analysis
   #
@@ -326,9 +326,9 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            # Stage 1: B50 Pro — chart vision + search query extraction (qwen2.5vl:7b)
+            # Stage 1: B50 Pro — chart vision + search query extraction (llava:7b)
             vision_url: str = "http://coding:11437"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_model: str = "llava:7b"
             # Stage 2: B580 — deep financial reasoning (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "qwen3:14b"
@@ -536,7 +536,7 @@ data:
 
   # ===========================================================================
   # Vision Pipeline — deep image analysis with reasoning
-  # qwen2.5vl:3b describes (blocking) → deepseek-r1:14b streams reasoning
+  # llava:7b describes (blocking) → deepseek-r1:14b streams reasoning
   # ===========================================================================
   vision_pipeline.py: |
     import asyncio
@@ -548,9 +548,9 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
-            # Stage 1: B50 Pro — image description (qwen2.5vl:7b)
+            # Stage 1: B50 Pro — image description (llava:7b)
             vision_url: str = "http://coding:11437"
-            vision_model: str = "qwen2.5vl:3b"
+            vision_model: str = "llava:7b"
             # Stage 2: B580 — deep reasoning (qwen3:14b, thinking mode)
             reasoning_url: str = "http://llm:11434"
             reasoning_model: str = "qwen3:14b"
