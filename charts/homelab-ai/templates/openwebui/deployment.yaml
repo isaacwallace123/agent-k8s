@@ -25,7 +25,7 @@ spec:
         {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui" "context" .) | nindent 8 }}
     spec:
       nodeSelector:
-        {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
+        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
       {{- with .Values.openwebui.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
