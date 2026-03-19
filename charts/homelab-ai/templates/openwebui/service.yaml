@@ -10,6 +10,8 @@ metadata:
     app.kubernetes.io/component: openwebui
 spec:
   type: LoadBalancer
+  # Pin to .243 — .242 conflicts with another device on the LAN (MAC 0C:29:8F:7B:40:A9)
+  loadBalancerIP: 192.168.0.243
   selector:
     {{- include "homelab-ai.selectorLabels" (dict "component" "openwebui" "context" .) | nindent 4 }}
   ports:
