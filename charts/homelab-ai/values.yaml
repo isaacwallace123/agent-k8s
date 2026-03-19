@@ -695,5 +695,7 @@ overwatch:
       cpu: "500m"
       memory: "512Mi"
 
-  nodeSelector: {}
+  nodeSelector:
+    proxmox-host: pve1
+    role: ai
   tolerations: []
