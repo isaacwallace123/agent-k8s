@@ -131,9 +131,10 @@ coding:
   enabled: true
 
   image:
-    repository: intelanalytics/ipex-llm-inference-cpp-xpu
-    # Pinned — 2.3.0-SNAPSHOT/latest has broken XMX SDP kernel on B50 Pro (Battlemage/xe2)
-    tag: "2.2.0-SNAPSHOT"
+    repository: ollama/ollama
+    # Standard Ollama with ggml-sycl backend — avoids bigdl's broken XMX SDP kernel on B50 Pro (Battlemage/xe2)
+    # All IPEX-LLM versions (2.1.0, 2.2.0-SNAPSHOT, 2.3.0) crash on Battlemage during inference.
+    tag: "latest"
     pullPolicy: IfNotPresent
 
   port: 11437
