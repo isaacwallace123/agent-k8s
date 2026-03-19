@@ -40,7 +40,7 @@ spec:
     spec:
       restartPolicy: OnFailure
       nodeSelector:
-        {{- include "homelab-ai.nodeSelectorApps" . | nindent 8 }}
+        {{- include "homelab-ai.nodeSelectorPve2" . | nindent 8 }}
 
       volumes:
         - name: model-presets
