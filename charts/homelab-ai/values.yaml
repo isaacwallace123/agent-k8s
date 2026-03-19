@@ -113,7 +113,7 @@ llm:
 # Pipeline: user input + image → this pod analyzes → llm pod reasons → answer.
 # =============================================================================
 coding:
-  enabled: true
+  enabled: false
 
   image:
     repository: ollama/ollama
@@ -187,7 +187,7 @@ coding:
 # Keeps inference traffic off pve1 for background indexing tasks.
 # =============================================================================
 embeddings:
-  enabled: true
+  enabled: false
 
   image:
     repository: intelanalytics/ipex-llm-inference-cpp-xpu
@@ -454,7 +454,7 @@ postgres:
 # Runs on pve1 NVMe
 # =============================================================================
 redis:
-  enabled: true
+  enabled: false
 
   image:
     repository: redis
@@ -510,7 +510,7 @@ redis:
 #   llm:11434     — secondary: finance AI (B580)
 # =============================================================================
 openwebui:
-  enabled: true
+  enabled: false
 
   image:
     repository: ghcr.io/open-webui/open-webui
@@ -593,7 +593,7 @@ openwebui:
 #   Vision Pipeline  — qwen2.5vl:7b describes image → deepseek-r1:14b reasons
 # =============================================================================
 pipelines:
-  enabled: true
+  enabled: false
 
   image:
     repository: ghcr.io/open-webui/pipelines
@@ -630,7 +630,7 @@ pipelines:
 # JSON format is enabled so OpenWebUI can query it programmatically.
 # =============================================================================
 searxng:
-  enabled: true
+  enabled: false
 
   image:
     repository: searxng/searxng
@@ -678,8 +678,8 @@ overwatch:
   prometheusUrl: "http://prometheus.monitoring:9090"
 
   # Ollama LLM endpoint and model for analysis
-  ollamaUrl: "http://coding:11437"
-  model: "qwen2.5-coder:14b"
+  ollamaUrl: "http://llm:11434"
+  model: "qwen3:14b"
 
   # Postgres connection string for storing insight history.
   # Override in values-secret.yaml (not committed to git):
