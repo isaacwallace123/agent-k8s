@@ -27,7 +27,7 @@ global:
     - 993  # render (confirmed on these nodes)
 
 # =============================================================================
-# LLM — Main coding / chat model
+# LLM — Finance AI — occasional use, strong math/reasoning
 # Runs on pve1 (Intel Arc B580 12GB)
 # Served via Ollama. Model files live on pve1 SATA SSD (mounted as PVC).
 # =============================================================================
@@ -122,13 +122,90 @@ llm:
       path: /api/tags
 
 # =============================================================================
+# Coding — Primary coding / planning model
+# Runs on pve1 (Intel Arc B50 Pro 16GB)
+# qwen2.5-coder:14b at Q8 fits entirely in 16GB VRAM — zero system RAM spill.
+# Also serves as the portfolio insight model via Open WebUI system prompts.
+# =============================================================================
+coding:
+  enabled: true
+
+  image:
+    repository: intelanalytics/ipex-llm-inference-cpp-xpu
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  port: 11437
+
+  defaultModel: "qwen2.5-coder:14b"
+
+  resources:
+    requests:
+      cpu: "4"
+      memory: "16Gi"
+    limits:
+      cpu: "16"    # 13700KF has 16 threads — shared with finance pod (different GPU, same node)
+      memory: "32Gi"  # Q8 14b ~15GB VRAM, minimal KV spill needed
+      # gpu.intel.com/xe: 1
+
+  storage:
+    enabled: true
+    size: 100Gi
+    storageClass: ""
+    mountPath: /root/.ollama
+
+  env:
+    - name: OLLAMA_HOST
+      value: "0.0.0.0:11437"
+    - name: ONEAPI_DEVICE_SELECTOR
+      value: "level_zero:1"   # B50 Pro is second GPU on pve1 — verify with: clinfo or xpu-smi
+    - name: OLLAMA_NUM_GPU
+      value: "999"
+    - name: ZES_ENABLE_SYSMAN
+      value: "1"
+    - name: no_proxy
+      value: "localhost,127.0.0.1"
+    - name: OLLAMA_KEEP_ALIVE
+      value: "-1"
+    - name: OLLAMA_NUM_PARALLEL
+      value: "1"
+    - name: OLLAMA_MAX_LOADED_MODELS
+      value: "1"
+    - name: OLLAMA_FLASH_ATTENTION
+      value: "1"
+    - name: SYCL_CACHE_PERSISTENT
+      value: "1"
+    - name: SYCL_CACHE_DIR
+      value: "/root/.ollama/.sycl-cache"
+    - name: OLLAMA_KV_CACHE_TYPE
+      value: "q8_0"
+    - name: OLLAMA_CONTEXT_LENGTH
+      value: "16384"
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  probes:
+    liveness:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      path: /api/tags
+    readiness:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      path: /api/tags
+
+# =============================================================================
 # Embeddings — Text embedding service
 # Runs on pve2 (Intel Arc A380 6GB)
 # Uses a lightweight Ollama instance with an embedding model.
 # Keeps inference traffic off pve1 for background indexing tasks.
 # =============================================================================
 embeddings:
-  enabled: false
+  enabled: true
 
   image:
     repository: intelanalytics/ipex-llm-inference-cpp-xpu
@@ -448,7 +525,7 @@ redis:
 # Connects to the LLM service internally at http://llm:11434
 # =============================================================================
 openwebui:
-  enabled: false
+  enabled: true
 
   image:
     repository: ghcr.io/open-webui/open-webui
@@ -458,7 +535,7 @@ openwebui:
   port: 8080
 
   # Internal URL of the Ollama LLM service
-  ollamaBaseUrl: "http://llm:11434"
+  ollamaBaseUrl: "http://coding:11437"
 
   resources:
     requests:
@@ -545,7 +622,7 @@ pipelines:
 # JSON format is enabled so OpenWebUI can query it programmatically.
 # =============================================================================
 searxng:
-  enabled: false
+  enabled: true
 
   image:
     repository: searxng/searxng
@@ -593,8 +670,8 @@ overwatch:
   prometheusUrl: "http://prometheus.monitoring:9090"
 
   # Ollama LLM endpoint and model for analysis
-  ollamaUrl: "http://llm:11434"
-  model: "qwen2.5:14b"
+  ollamaUrl: "http://coding:11437"
+  model: "qwen2.5-coder:14b"
 
   # Postgres connection string for storing insight history.
   # Override in values-secret.yaml (not committed to git):
