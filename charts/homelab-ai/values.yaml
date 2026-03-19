@@ -127,7 +127,9 @@ coding:
   port: 11437
 
   # Vision + analysis model — Stage 1 of all pipelines
-  defaultModel: "qwen2.5vl:7b"
+  # qwen2.5vl:7b exceeds Intel Arc Vulkan maxStorageBufferRange (4GB/buffer limit on Mesa driver)
+  # 3b compute graph stays within the 4GB per-buffer Vulkan cap
+  defaultModel: "qwen2.5vl:3b"
 
   resources:
     requests:
